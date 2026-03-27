@@ -1,0 +1,54 @@
+---
+# =============================================================
+#  roles/xray/tasks/sync-users.yml
+#  User UUID synchronization — shared logic
+#
+#  Required variables:
+#    - users       (from vars/users.yml)
+#    - users_file  (path to users.json on server)
+#
+#  Result:
+#    - synced_users (list with uuid for each user)
+# =============================================================
+
+- name: Load current user state
+  ansible.builtin.slurp:
+    src: "{{ users_file }}"
+  register: users_raw
+
+- name: Parse current users
+  ansible.builtin.set_fact:
+    current_users: "{{ users_raw.content | b64decode | from_json }}"
+
+# Generate UUID for users not yet in current_users.
+# Use python3 on the controller — available everywhere (Mac, Linux).
+# CANNOT use lookup('pipe', xray_bin + ' uuid') —
+# lookup always runs on the controller, but xray_bin only exists
+# on the remote server.
+- name: Synchronize UUIDs (generate for new, preserve for existing)
+  ansible.builtin.set_fact:
+    synced_users: >-
+      {{
+        synced_users | default([]) + [{
+          'name':      item.name,
+          'uuid':      (current_users
+                        | selectattr('name','equalto',item.name)
+                        | map(attribute='uuid') | list | first)
+                       if (current_users
+                           | selectattr('name','equalto',item.name)
+                           | list | length > 0)
+                       else lookup('pipe', 'python3 -c "import uuid; print(uuid.uuid4())"'),
+          'ru_direct': item.ru_direct,
+          'created':   item.created,
+          'active':    item.active
+        }]
+      }}
+  loop: "{{ users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Save updated user state
+  ansible.builtin.copy:
+    dest: "{{ users_file }}"
+    mode: "0600"
+    content: "{{ synced_users | to_nice_json }}"

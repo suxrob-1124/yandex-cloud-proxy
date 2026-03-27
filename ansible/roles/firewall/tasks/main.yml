@@ -1,0 +1,45 @@
+---
+# =============================================================
+#  roles/firewall/tasks/main.yml
+#  ufw setup — minimal set of open ports
+# =============================================================
+
+- name: Install ufw
+  ansible.builtin.apt:
+    name:  ufw
+    state: present
+
+- name: Default policy — deny incoming
+  community.general.ufw:
+    default: deny
+    direction: incoming
+
+- name: Default policy — allow outgoing
+  community.general.ufw:
+    default: allow
+    direction: outgoing
+
+- name: Allow SSH (important to do BEFORE enabling ufw)
+  community.general.ufw:
+    rule:    allow
+    port:    "22"
+    proto:   tcp
+    comment: SSH
+
+- name: Allow Xray port
+  community.general.ufw:
+    rule:    allow
+    port:    "{{ xray_port }}"
+    proto:   tcp
+    comment: Xray VLESS
+
+- name: Allow nginx sub port
+  community.general.ufw:
+    rule:    allow
+    port:    "{{ sub_port }}"
+    proto:   tcp
+    comment: Nginx sub configs
+
+- name: Enable ufw
+  community.general.ufw:
+    state: enabled

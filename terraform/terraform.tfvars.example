@@ -1,0 +1,40 @@
+# =============================================================
+#  Yandex Cloud authentication
+# =============================================================
+
+# Service Account Key (does not expire)
+# Create a service account:
+#   yc iam service-account create --name xray-terraform
+#   yc resource-manager folder add-access-binding \
+#     --id YOUR_FOLDER_ID \
+#     --role editor \
+#     --service-account-name xray-terraform
+# Create a key:
+#   yc iam key create --service-account-name xray-terraform --output key.json
+yc_service_account_key_file = "key.json"
+
+# Get: yc resource-manager cloud list
+yc_cloud_id = "YOUR_CLOUD_ID"
+
+# Get: yc resource-manager folder list
+yc_folder_id = "YOUR_FOLDER_ID"
+
+# Zone (keep as is for Moscow)
+yc_zone = "ru-central1-a"
+
+# VM name
+vm_name = "edge-01"
+
+# Path to your public SSH key
+# If you don't have a key: ssh-keygen -t ed25519 -f ~/.ssh/xray-infra -C "xray-infra"
+ssh_public_key_path = "~/.ssh/xray-infra.pub"
+ssh_user            = "ubuntu"
+
+# VM parameters
+vm_cores     = 2
+vm_memory_gb = 2
+vm_disk_gb   = 20
+
+# Ports
+xray_port = 443
+sub_port  = 8443

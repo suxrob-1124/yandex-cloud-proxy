@@ -1,0 +1,124 @@
+---
+# =============================================================
+#  roles/xray/tasks/main.yml
+# =============================================================
+
+- name: Install Xray
+  ansible.builtin.shell: |
+    bash -c "$(curl -sL \
+      https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" \
+      @ install
+  args:
+    creates: "{{ xray_bin }}"
+  notify: Restart xray
+
+- name: Create log directory
+  ansible.builtin.file:
+    path: "{{ xray_log_dir }}"
+    state: directory
+    mode: "0755"
+
+# -----------------------------------------------------------------
+#  Reality key generation
+#  Runs ONCE — if secrets.json already exists, skip.
+#  Pattern: idempotent key generation
+# -----------------------------------------------------------------
+
+- name: Check secrets existence
+  ansible.builtin.stat:
+    path: "{{ xray_secrets_file }}"
+  register: secrets_stat
+
+- name: Generate Reality keys (first install only)
+  when: not secrets_stat.stat.exists
+  block:
+    - name: Generate x25519 key pair
+      ansible.builtin.command: "{{ xray_bin }} x25519"
+      register: xray_keys
+      changed_when: true
+
+    - name: Generate Short ID
+      ansible.builtin.command: openssl rand -hex 8
+      register: xray_short_id
+      changed_when: true
+
+    # xray x25519 outputs 2 lines: private and public key
+    # Parse by position (last word in each line) — does not depend on label format
+    - name: Parse x25519 keys
+      ansible.builtin.set_fact:
+        xray_private_key: "{{ xray_keys.stdout_lines[0].split()[-1] }}"
+        xray_public_key:  "{{ xray_keys.stdout_lines[1].split()[-1] }}"
+        xray_sid:         "{{ xray_short_id.stdout | trim }}"
+
+    - name: Save secrets to JSON file
+      ansible.builtin.copy:
+        dest: "{{ xray_secrets_file }}"
+        mode: "0600"
+        content: |
+          {
+            "private_key": "{{ xray_private_key }}",
+            "public_key":  "{{ xray_public_key }}",
+            "short_id":    "{{ xray_sid }}"
+          }
+
+- name: Load secrets from server
+  ansible.builtin.slurp:
+    src: "{{ xray_secrets_file }}"
+  register: secrets_raw
+
+- name: Parse secrets into variables
+  ansible.builtin.set_fact:
+    xray_secrets: "{{ secrets_raw.content | b64decode | from_json }}"
+
+# -----------------------------------------------------------------
+#  User UUID synchronization
+# -----------------------------------------------------------------
+
+- name: Load user list from vars/users.yml
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../vars/users.yml"
+
+- name: Synchronize user UUIDs
+  ansible.builtin.include_tasks: sync-users.yml
+
+# -----------------------------------------------------------------
+#  Load WARP credentials (if available)
+# -----------------------------------------------------------------
+
+- name: Check WARP credentials availability
+  ansible.builtin.stat:
+    path: "{{ warp_secrets_file | default('/etc/xray-manager/warp.json') }}"
+  register: warp_check
+
+- name: Load WARP credentials
+  when: warp_check.stat.exists
+  block:
+    - name: Read WARP credentials
+      ansible.builtin.slurp:
+        src: "{{ warp_secrets_file | default('/etc/xray-manager/warp.json') }}"
+      register: warp_raw
+
+    - name: Parse WARP credentials
+      ansible.builtin.set_fact:
+        warp_secrets: "{{ warp_raw.content | b64decode | from_json }}"
+
+# -----------------------------------------------------------------
+#  Generate Xray server config from template
+# -----------------------------------------------------------------
+
+- name: Generate Xray server config
+  ansible.builtin.template:
+    src:   xray-server.json.j2
+    dest:  "{{ xray_config_dir }}/config.json"
+    mode:  "0640"
+    owner: root
+    group: nogroup
+    validate: "{{ xray_bin }} run -test -c %s"
+  notify: Restart xray
+
+- name: Enable and start Xray
+  ansible.builtin.systemd:
+    name:          xray
+    state:         started
+    enabled:       true
+    daemon_reload: true

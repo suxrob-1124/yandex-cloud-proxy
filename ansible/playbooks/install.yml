@@ -1,0 +1,86 @@
+---
+# =============================================================
+#  playbooks/install.yml
+#  Full server installation from scratch
+#  Run: make install
+#  Idempotent — safe to run repeatedly
+# =============================================================
+
+- name: Full Xray server installation
+  hosts: xray_servers
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - "{{ playbook_dir }}/../inventory/group_vars/all.yml"
+
+  pre_tasks:
+    - name: Load Telegram settings (if available)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../vars/telegram.yml"
+      ignore_errors: true
+
+    - name: Load chain proxy settings (if available)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../vars/chain.yml"
+      ignore_errors: true
+    - name: Check OS
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+          - ansible_distribution_major_version | int >= 20
+        fail_msg: "Only Ubuntu 20.04+ is supported"
+        success_msg: "OS: {{ ansible_distribution }} {{ ansible_distribution_version }} ✓"
+
+    - name: Display server information
+      ansible.builtin.debug:
+        msg:
+          - "Host:     {{ inventory_hostname }}"
+          - "IP:       {{ ansible_host }}"
+          - "OS:       {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel:   {{ ansible_kernel }}"
+
+  roles:
+    - common       # basic Ubuntu setup
+    - firewall     # ufw rules
+    - warp         # Cloudflare WARP registration (WireGuard credentials)
+    - xray         # Xray installation and configuration
+    - nginx        # serving client configs
+    - monitoring   # Telegram alerts (optional, if telegram.yml exists)
+
+  post_tasks:
+    - name: Final service check
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: svc_status
+      loop:
+        - xray
+        - nginx
+        - fail2ban
+
+    - name: Load subscription token
+      ansible.builtin.slurp:
+        src: "{{ sub_token_file }}"
+      register: sub_token_raw
+
+    - name: Parse token
+      ansible.builtin.set_fact:
+        sub_token: "{{ sub_token_raw.content | b64decode | trim }}"
+
+    - name: Display subscription URLs
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.name }}:
+          https://{{ ansible_host }}:{{ sub_port }}/sub/{{ sub_token }}/{{ item.name }}.json
+      loop: "{{ synced_users | selectattr('active', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Installation complete
+      ansible.builtin.debug:
+        msg:
+          - "✓ Server is ready!"
+          - "  IP:          {{ ansible_host }}"
+          - "  Proxy:       port {{ xray_port }}"
+          - "  Configs:     port {{ sub_port }}"
+          - "  Masquerade:  {{ masquerade_host }}"

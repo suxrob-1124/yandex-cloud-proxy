@@ -1,0 +1,58 @@
+# =============================================================
+#  vars/users.yml
+#  SINGLE SOURCE OF TRUTH — user list
+#
+#  How to add a user:
+#    1. Add an entry to the list below
+#    2. git commit -m "add user ivan"
+#    3. make sync-users
+#
+#  How to remove a user:
+#    1. Delete or comment out the entry
+#    2. git commit -m "remove user ivan"
+#    3. make sync-users
+#
+#  Fields:
+#    name       — Latin characters, no spaces, unique
+#    ru_direct  — true: Russian sites direct / false: everything through proxy
+#    created    — creation date (for audit)
+#    active     — true/false: quickly disable without removing
+# =============================================================
+
+users:
+  - name:      sukhrob
+    ru_direct: true
+    created:   "2026-03-24"
+    active:    true
+
+  - name:      ostap
+    ru_direct: true
+    created:   "2026-03-24"
+    active:    true
+
+  - name:      roman
+    ru_direct: true
+    created:   "2026-03-26"
+    active:    true
+
+  - name:      gleb
+    ru_direct: true
+    created:   "2026-03-26"
+    active:    true
+
+  - name:      m.tarasov
+    ru_direct: true
+    created:   "2026-03-27"
+    active:    true
+
+  - name:      anita
+    ru_direct: true
+    created:   "2026-03-24"
+    active:    true
+
+
+  # Example of a disabled user (active: false)
+  # - name:      olduser
+  #   ru_direct: true
+  #   created:   "2025-01-10"
+  #   active:    false

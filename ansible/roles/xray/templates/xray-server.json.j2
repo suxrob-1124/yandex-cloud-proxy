@@ -1,0 +1,152 @@
+{
+  "log": {
+    "loglevel": "warning",
+    "access":   "{{ xray_log_dir }}/access.log",
+    "error":    "{{ xray_log_dir }}/error.log"
+  },
+
+  "dns": {
+    "servers": [
+      "https+local://1.1.1.1/dns-query",
+      "https+local://8.8.8.8/dns-query"
+    ],
+    "queryStrategy": "UseIPv4"
+  },
+
+  "stats": {},
+
+  "policy": {
+    "levels": {
+      "0": {
+        "statsUserUplink":   true,
+        "statsUserDownlink": true,
+        "connIdle":          {{ xray_user_conn_idle | default(300) }},
+        "uplinkOnly":        {{ xray_user_uplink_only | default(2) }},
+        "downlinkOnly":      {{ xray_user_downlink_only | default(5) }}
+      }
+    },
+    "system": {
+      "statsInboundUplink":   true,
+      "statsInboundDownlink": true
+    }
+  },
+
+  "api": {
+    "tag":      "api",
+    "services": ["HandlerService", "StatsService"]
+  },
+
+  "inbounds": [
+    {
+      "listen":   "0.0.0.0",
+      "port":     {{ xray_port }},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+{% set active_users = synced_users | selectattr('active', 'equalto', true) | list %}
+{% for user in active_users %}
+          {
+            "id":    "{{ user.uuid }}",
+            "flow":  "xtls-rprx-vision",
+            "email": "{{ user.name }}"
+          }{% if not loop.last %},{% endif %}
+
+{% endfor %}
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network":  "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show":        false,
+          "dest":        "{{ masquerade_host }}:443",
+          "xver":        0,
+          "serverNames": ["{{ masquerade_host }}"],
+          "privateKey":  "{{ xray_secrets.private_key }}",
+          "shortIds":    ["{{ xray_secrets.short_id }}"]
+        }
+      },
+      "sniffing": {
+        "enabled":      true,
+        "destOverride": ["http", "tls", "quic"]
+      }
+    },
+    {
+      "listen":   "127.0.0.1",
+      "port":     10085,
+      "protocol": "dokodemo-door",
+      "settings": { "address": "127.0.0.1" },
+      "tag":      "api"
+    }
+  ],
+
+  "outbounds": [
+    { "protocol": "freedom", "tag": "direct" },
+{% if warp_secrets is defined %}
+    {
+      "protocol": "wireguard",
+      "settings": {
+        "secretKey": "{{ warp_secrets.private_key }}",
+        "address": [
+          "{{ warp_secrets.ipv4 }}/32",
+          "{{ warp_secrets.ipv6 }}/128"
+        ],
+        "peers": [
+          {
+            "publicKey": "{{ warp_secrets.peer_public_key }}",
+            "allowedIPs": ["0.0.0.0/0", "::/0"],
+            "endpoint": "{{ warp_endpoint }}"
+          }
+        ],
+        "reserved": {{ warp_secrets.reserved | default([0,0,0]) | to_json }},
+        "mtu": 1280
+      },
+      "tag": "warp"
+    },
+{% endif %}
+{% if chain_proxy_addr is defined %}
+    {
+      "protocol": "socks",
+      "settings": {
+        "servers": [{
+          "address": "{{ chain_proxy_addr }}",
+          "port":    {{ chain_proxy_port | default(1080) }}
+        }]
+      },
+      "tag": "chain"
+    },
+{% endif %}
+    { "protocol": "blackhole", "tag": "block" }
+  ],
+
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type":        "field",
+        "inboundTag":  ["api"],
+        "outboundTag": "api"
+      },
+{% if chain_proxy_addr is defined and chain_domains is defined %}
+      {
+        "type":        "field",
+        "domain":      {{ chain_domains | to_json }},
+        "outboundTag": "chain"
+      },
+{% endif %}
+{% if warp_secrets is defined and warp_domains is defined %}
+      {
+        "type":        "field",
+        "domain":      {{ warp_domains | to_json }},
+        "outboundTag": "warp"
+      },
+{% endif %}
+      {
+        "type":        "field",
+        "ip":          ["geoip:private"],
+        "outboundTag": "block"
+      }
+    ]
+  }
+}

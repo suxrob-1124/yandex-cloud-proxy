@@ -1,0 +1,97 @@
+---
+# =============================================================
+#  playbooks/status.yml
+#  Check status of all servers
+#  Run: make status
+# =============================================================
+
+- name: Server status
+  hosts: xray_servers
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - "{{ playbook_dir }}/../inventory/group_vars/all.yml"
+
+  tasks:
+    - name: Service status
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: services
+      loop:
+        - xray
+        - nginx
+        - fail2ban
+
+    - name: Display service status
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item }}:
+          {{ '✓ running' if item.status.ActiveState == 'active' else '✗ stopped' }}
+      loop: "{{ services.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check Xray port
+      ansible.builtin.wait_for:
+        host:    "{{ ansible_host }}"
+        port:    "{{ xray_port }}"
+        timeout: 5
+      become: false
+      delegate_to: localhost
+      register: xray_port_check
+      ignore_errors: true
+
+    - name: Check nginx port
+      ansible.builtin.wait_for:
+        host:    "{{ ansible_host }}"
+        port:    "{{ sub_port }}"
+        timeout: 5
+      become: false
+      delegate_to: localhost
+      register: sub_port_check
+      ignore_errors: true
+
+    - name: Check outbound Direct (google.com)
+      ansible.builtin.command: "curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://google.com"
+      register: direct_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Check outbound WARP (api.openai.com)
+      ansible.builtin.command: "curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://api.openai.com"
+      register: warp_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Check DNS (resolving via DoH)
+      ansible.builtin.command: "curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://1.1.1.1/dns-query?name=google.com&type=A"
+      register: dns_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Load users
+      ansible.builtin.slurp:
+        src: "{{ users_file }}"
+      register: users_raw
+
+    - name: Check WARP credentials
+      ansible.builtin.stat:
+        path: "{{ warp_secrets_file | default('/etc/xray-manager/warp.json') }}"
+      register: warp_file_check
+
+    - name: Summary report
+      ansible.builtin.debug:
+        msg:
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          - "Server:        {{ inventory_hostname }}"
+          - "IP:            {{ ansible_host }}"
+          - "Uptime:        {{ ansible_uptime_seconds | int // 3600 }}h"
+          - "Port 443:      {{ '✓' if xray_port_check is succeeded else '✗' }}"
+          - "Port {{ sub_port }}:     {{ '✓' if sub_port_check is succeeded else '✗' }}"
+          - "Direct:        {{ '✓' if direct_check.stdout | default('0') != '000' else '✗ not working' }}"
+          - "WARP:          {{ '✓' if warp_check.stdout | default('0') != '000' else '✗ not working' }}"
+          - "DNS (DoH):     {{ '✓' if dns_check.stdout | default('0') != '000' else '✗ not working' }}"
+          - "WARP creds:    {{ '✓' if warp_file_check.stat.exists else '✗ missing' }}"
+          - "Users:         {{ (users_raw.content | b64decode | from_json) | length }}"
+          - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

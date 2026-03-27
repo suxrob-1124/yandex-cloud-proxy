@@ -1,0 +1,75 @@
+---
+# =============================================================
+#  roles/warp/tasks/main.yml
+#  Register Cloudflare WARP and save WireGuard credentials
+#  Runs ONCE — if warp.json already exists, skip.
+# =============================================================
+
+- name: Install wireguard-tools (for key generation)
+  ansible.builtin.apt:
+    name: wireguard-tools
+    state: present
+
+- name: Check WARP credentials existence
+  ansible.builtin.stat:
+    path: "{{ warp_secrets_file }}"
+  register: warp_stat
+
+- name: Register WARP (first install only)
+  when: not warp_stat.stat.exists
+  block:
+    - name: Generate WireGuard private key
+      ansible.builtin.command: wg genkey
+      register: warp_privkey_raw
+      changed_when: true
+
+    - name: Derive public key
+      ansible.builtin.shell:
+        cmd: "echo '{{ warp_privkey_raw.stdout | trim }}' | wg pubkey"
+      register: warp_pubkey_raw
+      changed_when: false
+
+    - name: Register with Cloudflare WARP API
+      ansible.builtin.uri:
+        url: "https://api.cloudflareclient.com/v0a2158/reg"
+        method: POST
+        body_format: json
+        body:
+          key: "{{ warp_pubkey_raw.stdout | trim }}"
+          tos: "{{ '%Y-%m-%dT%H:%M:%S.000Z' | strftime }}"
+        headers:
+          Content-Type: "application/json"
+        status_code: 200
+      register: warp_reg
+
+    # reserved bytes = base64_decode(client_id) -> 3 bytes
+    # Required for correct WARP routing
+    - name: Calculate reserved bytes from client_id
+      ansible.builtin.shell:
+        cmd: "echo -n '{{ warp_reg.json.config.client_id }}' | base64 -d | od -An -tu1 | tr -s ' ' | xargs | tr ' ' ','"
+      register: warp_reserved_raw
+      changed_when: false
+
+    - name: Save WARP credentials
+      ansible.builtin.copy:
+        dest: "{{ warp_secrets_file }}"
+        mode: "0600"
+        content: |
+          {
+            "private_key": "{{ warp_privkey_raw.stdout | trim }}",
+            "public_key":  "{{ warp_pubkey_raw.stdout | trim }}",
+            "peer_public_key": "{{ warp_reg.json.config.peers[0].public_key }}",
+            "ipv4": "{{ warp_reg.json.config.interface.addresses.v4 }}",
+            "ipv6": "{{ warp_reg.json.config.interface.addresses.v6 }}",
+            "client_id": "{{ warp_reg.json.config.client_id | default('') }}",
+            "reserved": [{{ warp_reserved_raw.stdout | trim }}]
+          }
+
+- name: Load WARP credentials
+  ansible.builtin.slurp:
+    src: "{{ warp_secrets_file }}"
+  register: warp_raw
+
+- name: Parse WARP credentials
+  ansible.builtin.set_fact:
+    warp_secrets: "{{ warp_raw.content | b64decode | from_json }}"

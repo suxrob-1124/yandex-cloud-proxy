@@ -1,0 +1,112 @@
+---
+# =============================================================
+#  roles/common/tasks/main.yml
+#  Basic Ubuntu setup — runs on any new server
+# =============================================================
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Upgrade all packages
+  ansible.builtin.apt:
+    upgrade: dist
+    autoremove: true
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+
+- name: Set timezone
+  community.general.timezone:
+    name: Europe/Moscow
+
+- name: Create manager working directory
+  ansible.builtin.file:
+    path: "{{ manager_dir }}"
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+
+- name: Initialize users file (if it does not exist)
+  ansible.builtin.copy:
+    content: "[]"
+    dest: "{{ users_file }}"
+    force: false
+    mode: "0600"
+
+- name: Check subscription token existence
+  ansible.builtin.stat:
+    path: "{{ sub_token_file }}"
+  register: sub_token_stat
+
+- name: Generate subscription token (once)
+  ansible.builtin.copy:
+    dest: "{{ sub_token_file }}"
+    mode: "0600"
+    content: "{{ lookup('pipe', 'openssl rand -hex 16') }}"
+  when: not sub_token_stat.stat.exists
+
+- name: Configure fail2ban for SSH
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/sshd-custom.conf
+    mode: "0644"
+    content: |
+      [sshd]
+      enabled  = true
+      maxretry = {{ fail2ban_ssh_maxretry }}
+      bantime  = {{ fail2ban_ssh_bantime }}
+      findtime = {{ fail2ban_ssh_findtime }}
+  notify: Restart fail2ban
+
+- name: Deploy Xray auto-update script
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/xray-update.sh
+    mode: "0700"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      LOG=/var/log/xray-update.log
+      echo "=== $(date) ===" >> "$LOG"
+
+      SCRIPT=$(mktemp)
+      trap 'rm -f "$SCRIPT"' EXIT
+
+      # Download the install script to a temp file (not piped into bash)
+      if ! curl -sL -o "$SCRIPT" \
+        https://github.com/XTLS/Xray-install/raw/main/install-release.sh; then
+        echo "ERROR: failed to download the script" >> "$LOG"
+        exit 1
+      fi
+
+      # Save the current version for comparison
+      OLD_VER=$(/usr/local/bin/xray version 2>/dev/null | head -1 || echo "none")
+
+      # Run the installation
+      bash "$SCRIPT" @ install >> "$LOG" 2>&1
+
+      NEW_VER=$(/usr/local/bin/xray version 2>/dev/null | head -1 || echo "none")
+
+      if [ "$OLD_VER" != "$NEW_VER" ]; then
+        echo "Updated: $OLD_VER -> $NEW_VER" >> "$LOG"
+        systemctl restart xray
+        sleep 2
+        if systemctl is-active --quiet xray; then
+          echo "Xray is running after update" >> "$LOG"
+        else
+          echo "ERROR: Xray failed to start after update!" >> "$LOG"
+        fi
+      else
+        echo "No updates available ($OLD_VER)" >> "$LOG"
+      fi
+
+- name: Xray auto-update (weekly via cron)
+  ansible.builtin.cron:
+    name: "xray-autoupdate"
+    weekday: "0"
+    hour: "3"
+    minute: "0"
+    job: /usr/local/sbin/xray-update.sh

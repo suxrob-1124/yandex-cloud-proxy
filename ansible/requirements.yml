@@ -1,0 +1,11 @@
+# =============================================================
+#  ansible/requirements.yml
+#  Зависимости Ansible коллекций
+#
+#  Установка: ansible-galaxy collection install -r requirements.yml
+#  Или через: make install (Makefile вызывает это автоматически)
+# =============================================================
+
+collections:
+  - name: community.general
+    version: ">=7.0.0"

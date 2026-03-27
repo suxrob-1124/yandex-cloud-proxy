@@ -1,0 +1,14 @@
+# Packages required on any server
+common_packages:
+  - curl
+  - wget
+  - unzip
+  - jq
+  - fail2ban
+  - ufw
+  - cron
+
+# fail2ban
+fail2ban_ssh_maxretry: 5
+fail2ban_ssh_bantime:  3600
+fail2ban_ssh_findtime: 600

@@ -1,0 +1,49 @@
+---
+# =============================================================
+#  roles/monitoring/tasks/main.yml
+#  Telegram monitoring (optional)
+#  Installed ONLY if telegram_bot_token is defined
+# =============================================================
+
+- name: Check Telegram settings availability
+  ansible.builtin.set_fact:
+    monitoring_enabled: "{{ telegram_bot_token is defined and telegram_chat_id is defined }}"
+
+- name: Install monitoring script
+  when: monitoring_enabled | bool
+  block:
+    - name: Deploy monitoring script
+      ansible.builtin.template:
+        src: xray-monitor.sh.j2
+        dest: /usr/local/sbin/xray-monitor.sh
+        mode: "0700"
+
+    - name: Configure cron for monitoring
+      ansible.builtin.cron:
+        name: "xray-monitoring"
+        minute: "*/{{ monitoring_interval }}"
+        job: /usr/local/sbin/xray-monitor.sh
+
+    - name: Send test message
+      ansible.builtin.uri:
+        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          chat_id: "{{ telegram_chat_id }}"
+          text: "✅ Monitoring installed on {{ inventory_hostname }} ({{ ansible_host }})"
+          parse_mode: "Markdown"
+      delegate_to: localhost
+      become: false
+
+- name: Monitoring not configured (Telegram not set)
+  when: not (monitoring_enabled | bool)
+  block:
+    - name: Remove monitoring cron (if it existed)
+      ansible.builtin.cron:
+        name: "xray-monitoring"
+        state: absent
+
+    - name: Info
+      ansible.builtin.debug:
+        msg: "Telegram monitoring skipped — telegram_bot_token not set. See ansible/vars/telegram.yml.example"

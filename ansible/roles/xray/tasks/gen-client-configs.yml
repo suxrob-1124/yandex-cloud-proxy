@@ -1,0 +1,59 @@
+---
+# =============================================================
+#  roles/xray/tasks/gen-client-configs.yml
+#  Generate client configs and subscription files
+#
+#  Required variables:
+#    - synced_users   (list of users with uuid, active, ru_direct)
+#    - xray_secrets   (dict with public_key, short_id)
+#    - sub_dir, masquerade_host, xray_port (from group_vars)
+# =============================================================
+
+- name: Generate client configs (JSON)
+  ansible.builtin.template:
+    src:  "{{ role_path }}/templates/xray-client.json.j2"
+    dest: "{{ sub_dir }}/{{ item.name }}.json"
+    mode: "0644"
+  vars:
+    user:      "{{ item }}"
+    server_ip: "{{ ansible_host }}"
+  loop: "{{ synced_users | selectattr('active', 'equalto', true) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Generate subscription files (V2Box / Hiddify)
+  ansible.builtin.copy:
+    dest: "{{ sub_dir }}/{{ item.name }}"
+    mode: "0644"
+    content: >-
+      {{ ('vless://' + item.uuid
+          + '@' + ansible_host
+          + ':' + xray_port | string
+          + '?encryption=none'
+          + '&flow=xtls-rprx-vision'
+          + '&security=reality'
+          + '&sni=' + masquerade_host
+          + '&fp=chrome'
+          + '&pbk=' + xray_secrets.public_key
+          + '&sid=' + xray_secrets.short_id
+          + '&type=tcp'
+          + '#YC-' + item.name) | b64encode }}
+  loop: "{{ synced_users | selectattr('active', 'equalto', true) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Remove subscription files for deactivated users
+  ansible.builtin.file:
+    path:  "{{ sub_dir }}/{{ item.name }}"
+    state: absent
+  loop: "{{ synced_users | selectattr('active', 'equalto', false) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Remove configs for deactivated users
+  ansible.builtin.file:
+    path:  "{{ sub_dir }}/{{ item.name }}.json"
+    state: absent
+  loop: "{{ synced_users | selectattr('active', 'equalto', false) | list }}"
+  loop_control:
+    label: "{{ item.name }}"

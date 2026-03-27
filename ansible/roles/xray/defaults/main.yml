@@ -1,0 +1,2 @@
+# Path where xray stores Reality secrets
+xray_secrets_file: "/etc/xray-manager/secrets.json"

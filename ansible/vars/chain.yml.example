@@ -1,0 +1,8 @@
+# Chain proxy — external VPS for AI services (optional)
+# If not set — AI domains will go through WARP
+#
+# Copy: cp chain.yml.example chain.yml
+# Fill in the IP and port of the external VPS
+
+chain_proxy_addr: "YOUR_VPS_IP"
+chain_proxy_port: 1080

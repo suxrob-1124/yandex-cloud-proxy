@@ -1,0 +1,11 @@
+# Secrets for S3 backend (YC Object Storage)
+# Copy: cp backend.conf.example backend.conf
+# Fill in the keys from the step below
+#
+# Create a static access key for the service account:
+#   yc iam access-key create --service-account-name xray-terraform
+#
+# The output will contain access_key.key_id and secret (save the secret — it is shown only once!)
+
+access_key = "YOUR_ACCESS_KEY_ID"
+secret_key = "YOUR_SECRET_KEY"

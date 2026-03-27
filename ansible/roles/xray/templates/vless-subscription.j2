@@ -1,0 +1,1 @@
+{{ 'vless://' + user.uuid + '@' + server_ip + ':' + xray_port|string + '?encryption=none&flow=xtls-rprx-vision&security=reality&sni=' + masquerade_host + '&fp=chrome&pbk=' + xray_secrets.public_key + '&sid=' + xray_secrets.short_id + '&type=tcp#YC-' + user.name | b64encode }}

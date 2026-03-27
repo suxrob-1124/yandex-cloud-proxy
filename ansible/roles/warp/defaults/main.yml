@@ -1,0 +1,3 @@
+# Cloudflare WARP credentials
+warp_secrets_file: "/etc/xray-manager/warp.json"
+warp_endpoint:     "engage.cloudflareclient.com:2408"

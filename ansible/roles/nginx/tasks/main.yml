@@ -1,0 +1,74 @@
+---
+# =============================================================
+#  roles/nginx/tasks/main.yml
+#  Nginx serves client configs over HTTPS
+# =============================================================
+
+- name: Install nginx
+  ansible.builtin.apt:
+    name:  nginx
+    state: present
+
+- name: Create directories
+  ansible.builtin.file:
+    path:  "{{ item }}"
+    state: directory
+    mode:  "0755"
+  loop:
+    - "{{ sub_dir }}"
+    - "{{ ssl_dir }}"
+
+- name: Generate self-signed certificate (10 years)
+  ansible.builtin.command: >
+    openssl req -x509 -nodes -days 3650
+    -newkey rsa:2048
+    -keyout {{ ssl_dir }}/sub.key
+    -out    {{ ssl_dir }}/sub.crt
+    -subj   "/CN={{ ansible_host }}/O=XrayManager/C=RU"
+  args:
+    creates: "{{ ssl_dir }}/sub.crt"
+
+- name: Set private key permissions
+  ansible.builtin.file:
+    path: "{{ ssl_dir }}/sub.key"
+    mode: "0600"
+
+- name: Load subscription token
+  ansible.builtin.slurp:
+    src: "{{ sub_token_file }}"
+  register: sub_token_raw
+
+- name: Parse token
+  ansible.builtin.set_fact:
+    sub_token: "{{ sub_token_raw.content | b64decode | trim }}"
+
+- name: Remove default nginx site
+  ansible.builtin.file:
+    path:  /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Restart nginx
+
+- name: Deploy nginx config
+  ansible.builtin.template:
+    src:  nginx-sub.conf.j2
+    dest: /etc/nginx/sites-available/xray-sub
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable site
+  ansible.builtin.file:
+    src:   /etc/nginx/sites-available/xray-sub
+    dest:  /etc/nginx/sites-enabled/xray-sub
+    state: link
+  notify: Reload nginx
+
+- name: Generate client configs and subscription files
+  ansible.builtin.include_role:
+    name: xray
+    tasks_from: gen-client-configs.yml
+
+- name: Start and enable nginx
+  ansible.builtin.systemd:
+    name:    nginx
+    state:   started
+    enabled: true

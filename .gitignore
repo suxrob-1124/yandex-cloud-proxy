@@ -1,0 +1,45 @@
+# Terraform — secrets and state
+terraform/terraform.tfvars
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/*.tfstate.*
+terraform/key.json
+terraform/backend.conf
+terraform/*.json
+!terraform/*.tf
+!terraform/*.example
+
+# Ansible — secrets
+ansible/.vault_pass
+ansible/host_vars/*/vault.yml
+ansible/group_vars/*/vault.yml
+ansible/vars/secrets.yml
+ansible/vars/telegram.yml
+ansible/vars/chain.yml
+ansible/inventory/hosts.yml
+
+# Environment
+.env
+.env.local
+
+# OS junk
+.DS_Store
+*.swp
+*.swo
+
+# QR codes (contain VLESS credentials)
+qr-codes/
+
+# Billing and screenshots (may contain IPs/tokens)
+*.csv
+*.png
+*.svg
+!scripts/*.py
+
+# Claude Code
+.claude/
+
+# Legacy
+old-infra

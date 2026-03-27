@@ -1,0 +1,8 @@
+# Check interval (minutes)
+monitoring_interval: 5
+
+# Alert thresholds
+monitoring_disk_threshold: 80
+monitoring_traffic_free_gb: 10
+monitoring_traffic_warn_pct: 80
+monitoring_traffic_heavy_user_gb: 5

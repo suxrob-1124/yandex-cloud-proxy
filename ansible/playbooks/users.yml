@@ -1,0 +1,99 @@
+---
+# =============================================================
+#  playbooks/users.yml
+#  User synchronization — adding and removing
+#
+#  Workflow:
+#    1. Edit ansible/vars/users.yml
+#    2. git commit
+#    3. make sync-users
+#
+#  Playbook:
+#    - generates UUID for new users
+#    - regenerates Xray server config
+#    - regenerates nginx client configs
+#    - removes files of deactivated users
+# =============================================================
+
+- name: User synchronization
+  hosts: xray_servers
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../inventory/group_vars/all.yml"
+
+  tasks:
+    - name: Load user list
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../vars/users.yml"
+
+    - name: Load chain proxy settings (if available)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../vars/chain.yml"
+      ignore_errors: true
+
+    - name: Load subscription token
+      ansible.builtin.slurp:
+        src: "{{ sub_token_file }}"
+      register: sub_token_raw
+
+    - name: Parse token
+      ansible.builtin.set_fact:
+        sub_token: "{{ sub_token_raw.content | b64decode | trim }}"
+
+    - name: Load server secrets
+      ansible.builtin.slurp:
+        src: "{{ xray_secrets_file }}"
+      register: secrets_raw
+
+    - name: Parse secrets
+      ansible.builtin.set_fact:
+        xray_secrets: "{{ secrets_raw.content | b64decode | from_json }}"
+
+    - name: Synchronize user UUIDs
+      ansible.builtin.include_role:
+        name: xray
+        tasks_from: sync-users.yml
+
+    - name: Load WARP credentials (if available)
+      ansible.builtin.slurp:
+        src: "{{ warp_secrets_file | default('/etc/xray-manager/warp.json') }}"
+      register: warp_raw
+      ignore_errors: true
+
+    - name: Parse WARP credentials
+      ansible.builtin.set_fact:
+        warp_secrets: "{{ warp_raw.content | b64decode | from_json }}"
+      when: warp_raw is succeeded
+
+    - name: Update Xray server config
+      ansible.builtin.template:
+        src:      "{{ playbook_dir }}/../roles/xray/templates/xray-server.json.j2"
+        dest:     "{{ xray_config_dir }}/config.json"
+        mode:     "0640"
+        owner:    root
+        group:    nogroup
+        validate: "{{ xray_bin }} run -test -c %s"
+      notify: Restart xray
+
+    - name: Generate client configs and subscription files
+      ansible.builtin.include_role:
+        name: xray
+        tasks_from: gen-client-configs.yml
+
+    - name: Display subscription URLs
+      ansible.builtin.debug:
+        msg:
+          - "{{ item.name }}:"
+          - "  V2Box/Hiddify: https://{{ ansible_host }}:{{ sub_port }}/sub/{{ sub_token }}/{{ item.name }}"
+          - "  Xray JSON:     https://{{ ansible_host }}:{{ sub_port }}/sub/{{ sub_token }}/{{ item.name }}.json"
+      loop: "{{ synced_users | selectattr('active', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+  handlers:
+    - name: Restart xray
+      ansible.builtin.systemd:
+        name:  xray
+        state: restarted

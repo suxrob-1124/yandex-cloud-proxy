@@ -1,0 +1,3 @@
+[submodule "data/whitelist"]
+	path = data/whitelist
+	url = https://github.com/hxehex/russia-mobile-internet-whitelist.git

@@ -1,0 +1,31 @@
+server {
+    listen      {{ sub_port }} ssl;
+    server_name _;
+
+    ssl_certificate     {{ ssl_dir }}/sub.crt;
+    ssl_certificate_key {{ ssl_dir }}/sub.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    server_tokens off;
+
+    root {{ sub_dir }};
+
+    # Serving client configs (token protects against brute force)
+    location /sub/{{ sub_token }}/ {
+        alias       {{ sub_dir }}/;
+        default_type application/json;
+        add_header   Cache-Control "no-cache, no-store";
+
+        # GET only
+        limit_except GET { deny all; }
+    }
+
+    # Everything else — 404
+    location / {
+        return 404;
+    }
+
+    access_log /var/log/nginx/xray-sub.access.log;
+    error_log  /var/log/nginx/xray-sub.error.log;
+}

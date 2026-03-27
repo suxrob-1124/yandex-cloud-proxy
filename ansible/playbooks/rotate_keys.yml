@@ -1,0 +1,123 @@
+---
+# =============================================================
+#  playbooks/rotate_keys.yml
+#  Rotate Reality keys without losing users
+#  Run: make rotate-keys
+#
+#  After rotation:
+#    - publicKey in client configs is updated automatically
+#    - users press Update in their client
+#    - UUIDs and user list remain unchanged
+# =============================================================
+
+- name: Rotate Reality keys
+  hosts: xray_servers
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../inventory/group_vars/all.yml"
+
+  pre_tasks:
+    - name: Load chain proxy settings (if available)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../vars/chain.yml"
+      ignore_errors: true
+
+  tasks:
+    - name: Generate new x25519 key pair
+      ansible.builtin.command: "{{ xray_bin }} x25519"
+      register: new_keys
+      changed_when: true
+
+    - name: Generate new Short ID
+      ansible.builtin.command: openssl rand -hex 8
+      register: new_short_id
+      changed_when: true
+
+    # xray x25519 outputs 2 lines: private and public key
+    # Parse by position (last word in each line) — does not depend on label format
+    - name: Parse new keys
+      ansible.builtin.set_fact:
+        new_private_key: "{{ new_keys.stdout_lines[0].split()[-1] }}"
+        new_public_key:  "{{ new_keys.stdout_lines[1].split()[-1] }}"
+        new_sid:         "{{ new_short_id.stdout | trim }}"
+
+    - name: Back up old secrets
+      ansible.builtin.copy:
+        src:  "{{ xray_secrets_file }}"
+        dest: "{{ xray_secrets_file }}.bak"
+        remote_src: true
+        mode: "0600"
+
+    - name: Save new secrets
+      ansible.builtin.copy:
+        dest: "{{ xray_secrets_file }}"
+        mode: "0600"
+        content: |
+          {
+            "private_key": "{{ new_private_key }}",
+            "public_key":  "{{ new_public_key }}",
+            "short_id":    "{{ new_sid }}"
+          }
+
+    - name: Load new secrets into variables
+      ansible.builtin.set_fact:
+        xray_secrets:
+          private_key: "{{ new_private_key }}"
+          public_key:  "{{ new_public_key }}"
+          short_id:    "{{ new_sid }}"
+
+    - name: Load users
+      ansible.builtin.slurp:
+        src: "{{ users_file }}"
+      register: users_raw
+
+    - name: Parse users
+      ansible.builtin.set_fact:
+        synced_users: "{{ users_raw.content | b64decode | from_json }}"
+
+    - name: Load WARP credentials (if available)
+      ansible.builtin.slurp:
+        src: "{{ warp_secrets_file | default('/etc/xray-manager/warp.json') }}"
+      register: warp_raw
+      ignore_errors: true
+
+    - name: Parse WARP credentials
+      ansible.builtin.set_fact:
+        warp_secrets: "{{ warp_raw.content | b64decode | from_json }}"
+      when: warp_raw is succeeded
+
+    - name: Update server config
+      ansible.builtin.template:
+        src:      "{{ playbook_dir }}/../roles/xray/templates/xray-server.json.j2"
+        dest:     "{{ xray_config_dir }}/config.json"
+        mode:     "0640"
+        owner:    root
+        group:    nogroup
+        validate: "{{ xray_bin }} run -test -c %s"
+
+    - name: Generate client configs and subscription files
+      ansible.builtin.include_role:
+        name: xray
+        tasks_from: gen-client-configs.yml
+
+    - name: Restart Xray
+      ansible.builtin.systemd:
+        name:  xray
+        state: restarted
+
+    - name: Verify Xray started successfully
+      ansible.builtin.systemd:
+        name: xray
+      register: xray_status
+      failed_when: xray_status.status.ActiveState != 'active'
+
+    - name: Rotation summary
+      ansible.builtin.debug:
+        msg:
+          - "✓ Keys rotated"
+          - "  New Public key: {{ new_public_key }}"
+          - "  New Short ID:   {{ new_sid }}"
+          - "  Client configs updated automatically"
+          - "  Users press Update in their client"

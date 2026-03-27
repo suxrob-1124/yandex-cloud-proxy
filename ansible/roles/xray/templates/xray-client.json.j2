@@ -1,0 +1,85 @@
+{
+  "log": { "loglevel": "warning" },
+
+  "inbounds": [
+    {
+      "listen":   "127.0.0.1",
+      "port":     10808,
+      "protocol": "socks",
+      "settings": { "udp": true },
+      "tag":      "socks"
+    },
+    {
+      "listen":   "127.0.0.1",
+      "port":     10809,
+      "protocol": "http",
+      "tag":      "http"
+    }
+  ],
+
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [{
+          "address": "{{ server_ip }}",
+          "port":    {{ xray_port }},
+          "users": [{
+            "id":         "{{ user.uuid }}",
+            "flow":       "xtls-rprx-vision",
+            "encryption": "none"
+          }]
+        }]
+      },
+      "streamSettings": {
+        "network":  "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show":        false,
+          "fingerprint": "chrome",
+          "serverName":  "{{ masquerade_host }}",
+          "publicKey":   "{{ xray_secrets.public_key }}",
+          "shortId":     "{{ xray_secrets.short_id }}",
+          "spiderX":     "/"
+        }
+      },
+      "tag": "proxy"
+    },
+    { "protocol": "freedom",   "tag": "direct" },
+    { "protocol": "blackhole", "tag": "block"  }
+  ],
+
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type":        "field",
+        "ip":          ["geoip:private"],
+        "outboundTag": "direct"
+      },
+{% if user.ru_direct %}
+      {
+        "type":        "field",
+        "domain":      ["geosite:ru"],
+        "outboundTag": "direct"
+      },
+      {
+        "type":        "field",
+        "ip":          ["geoip:ru"],
+        "outboundTag": "direct"
+      },
+{% endif %}
+      {
+        "type":        "field",
+        "port":        "443",
+        "network":     "udp",
+        "outboundTag": "block"
+      },
+      {
+        "type":        "field",
+        "domain":      ["geosite:category-ads-all"],
+        "outboundTag": "block"
+      }
+    ]
+  }
+}
