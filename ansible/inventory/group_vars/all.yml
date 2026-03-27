@@ -43,6 +43,23 @@ warp_endpoint:     "engage.cloudflareclient.com:2408"
 # Chain proxy — settings in ansible/vars/chain.yml (in .gitignore)
 # chain_proxy_addr and chain_proxy_port are set there
 
+# Direct bypass — Russian services that must NOT go through WARP/chain
+# (they block datacenter and Cloudflare IPs)
+direct_domains:
+  - "domain:vk.com"
+  - "domain:vk.ru"
+  - "domain:vkontakte.ru"
+  - "domain:vkuserphoto.ru"
+  - "domain:vk-analytics.ru"
+  - "domain:vk.me"
+  - "domain:vkvideo.ru"
+  - "domain:yandex.ru"
+  - "domain:ya.ru"
+  - "domain:mail.ru"
+  - "domain:ok.ru"
+  - "domain:sberbank.ru"
+  - "domain:gosuslugi.ru"
+
 chain_domains:
   # AI services (strict geo-blocking, WARP cannot handle)
   - "domain:openai.com"
