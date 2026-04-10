@@ -3,14 +3,9 @@
 #  Used by Makefile to generate Ansible inventory
 # =============================================================
 
-output "server_ip" {
-  description = "Server public IP"
-  value       = yandex_vpc_address.public_ip.external_ipv4_address[0].address
-}
-
-output "server_name" {
-  description = "VM name"
-  value       = yandex_compute_instance.xray.name
+output "server_ips" {
+  description = "Map of server name → public IP"
+  value       = { for name, _ in var.servers : name => yandex_vpc_address.public_ip[name].external_ipv4_address[0].address }
 }
 
 output "ssh_user" {
@@ -33,22 +28,17 @@ output "zone" {
   value       = var.yc_zone
 }
 
-# Convenient output for SSH connection
-output "ssh_command" {
-  description = "SSH connection command"
-  value       = "ssh ${var.ssh_user}@${yandex_vpc_address.public_ip.external_ipv4_address[0].address}"
-}
-
 # JSON for generating Ansible inventory via Makefile
 output "ansible_inventory_json" {
   description = "JSON for generating Ansible inventory"
   value = jsonencode({
     servers = [
-      {
-        name     = yandex_compute_instance.xray.name
-        ip       = yandex_vpc_address.public_ip.external_ipv4_address[0].address
-        ssh_user = var.ssh_user
-        sub_port = var.sub_port
+      for name, cfg in var.servers : {
+        name            = name
+        ip              = yandex_vpc_address.public_ip[name].external_ipv4_address[0].address
+        ssh_user        = var.ssh_user
+        sub_port        = var.sub_port
+        masquerade_host = cfg.masquerade_host
       }
     ]
   })

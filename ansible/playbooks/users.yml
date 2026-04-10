@@ -24,9 +24,16 @@
     - "{{ playbook_dir }}/../inventory/group_vars/all.yml"
 
   tasks:
+    - name: Check for per-server user file
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../vars/users-{{ inventory_hostname }}.yml"
+      delegate_to: localhost
+      become: false
+      register: per_server_users
+
     - name: Load user list
       ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../vars/users.yml"
+        file: "{{ playbook_dir }}/../vars/{{ 'users-' + inventory_hostname + '.yml' if per_server_users.stat.exists else 'users.yml' }}"
 
     - name: Load chain proxy settings (if available)
       ansible.builtin.include_vars:

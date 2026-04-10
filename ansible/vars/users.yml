@@ -23,7 +23,7 @@ users:
   - name:      sukhrob
     ru_direct: true
     created:   "2026-03-24"
-    active:    true
+    active:    false
 
   - name:      ostap
     ru_direct: true
@@ -45,10 +45,31 @@ users:
     created:   "2026-03-27"
     active:    true
 
-  - name:      anita
+  - name:      e.varnavina
     ru_direct: true
-    created:   "2026-03-24"
+    created:   "2026-03-27"
     active:    true
+
+  - name:      l.gashin@alfasearch.org
+    ru_direct: true
+    created:   "2026-03-30"
+    active:    true
+
+  - name:      u.naryzhnaya@alfasearch.org
+    ru_direct: true
+    created:   "2026-03-30"
+    active:    true
+
+  - name:      a.shulepin
+    ru_direct: true
+    created:   "2026-03-31"
+    active:    true
+
+  - name:      t.ternovskaya
+    ru_direct: true
+    created:   "2026-03-31"
+    active:    true
+
 
 
   # Example of a disabled user (active: false)

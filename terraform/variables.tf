@@ -25,24 +25,25 @@ variable "yc_zone" {
 }
 
 # =============================================================
-#  Network
+#  Servers — map of VPN servers to create
+#  Each server gets its own VM, IP, network, security group
+#  Add a new server = add one entry to this map
 # =============================================================
 
-variable "subnet_cidr" {
-  description = "Subnet CIDR"
-  type        = string
-  default     = "10.0.1.0/24"
+variable "servers" {
+  description = "Map of VPN servers. Key = server name, value = config."
+  type = map(object({
+    subnet_cidr     = string
+    masquerade_host = string
+  }))
+  default = {
+    "edge-01" = { subnet_cidr = "10.0.1.0/24", masquerade_host = "www.apple.com" }
+  }
 }
 
 # =============================================================
 #  VM
 # =============================================================
-
-variable "vm_name" {
-  description = "Virtual machine name"
-  type        = string
-  default     = "edge-01"
-}
 
 variable "vm_cores" {
   description = "Number of vCPUs"

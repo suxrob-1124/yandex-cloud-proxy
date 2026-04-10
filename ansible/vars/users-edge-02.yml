@@ -1,0 +1,12 @@
+# =============================================================
+#  vars/users-edge-02.yml
+#  Users for edge-02 server (SNI: yandex.ru)
+#
+#  Usage: make sync-users SERVER=edge-02
+# =============================================================
+
+users:
+  - name:      o.beskhlebnykh@alfasearch.org
+    ru_direct: true
+    created:   "2026-04-03"
+    active:    true

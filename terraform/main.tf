@@ -1,27 +1,33 @@
 # =============================================================
-#  Network
+#  Shared network — one VPC for all servers
 # =============================================================
 
 resource "yandex_vpc_network" "main" {
-  name        = "${var.vm_name}-network"
-  description = "Network for the server"
-}
-
-resource "yandex_vpc_subnet" "main" {
-  name           = "${var.vm_name}-subnet"
-  zone           = var.yc_zone
-  network_id     = yandex_vpc_network.main.id
-  v4_cidr_blocks = [var.subnet_cidr]
+  name        = "edge-network"
+  description = "Shared network for edge servers"
 }
 
 # =============================================================
-#  Static public IP
+#  Subnets — one per server (different CIDR)
+# =============================================================
+
+resource "yandex_vpc_subnet" "main" {
+  for_each       = var.servers
+  name           = "${each.key}-subnet"
+  zone           = var.yc_zone
+  network_id     = yandex_vpc_network.main.id
+  v4_cidr_blocks = [each.value.subnet_cidr]
+}
+
+# =============================================================
+#  Static public IP — one per server
 #  Reserved separately — the address persists when the VM is recreated
 # =============================================================
 
 resource "yandex_vpc_address" "public_ip" {
-  name        = "${var.vm_name}-ip"
-  description = "Static IP for the server"
+  for_each    = var.servers
+  name        = "${each.key}-ip"
+  description = "Static IP for ${each.key}"
 
   external_ipv4_address {
     zone_id = var.yc_zone
@@ -32,13 +38,12 @@ resource "yandex_vpc_address" "public_ip" {
 }
 
 # =============================================================
-#  Security group
-#  Least privilege principle — only required ports are opened
+#  Security group — shared for all servers
 # =============================================================
 
 resource "yandex_vpc_security_group" "xray" {
-  name        = "${var.vm_name}-sg"
-  description = "Server access rules"
+  name        = "edge-sg"
+  description = "Access rules for edge servers"
   network_id  = yandex_vpc_network.main.id
 
   # Outbound traffic — unrestricted
@@ -74,7 +79,7 @@ resource "yandex_vpc_security_group" "xray" {
 }
 
 # =============================================================
-#  Virtual machine
+#  Virtual machines — one per server
 # =============================================================
 
 # Get the latest Ubuntu image from the family
@@ -83,11 +88,12 @@ data "yandex_compute_image" "ubuntu" {
 }
 
 resource "yandex_compute_instance" "xray" {
-  name        = var.vm_name
+  for_each    = var.servers
+  name        = each.key
   platform_id = var.vm_platform
   zone        = var.yc_zone
 
-  description = "Xray VLESS+Reality VPN server"
+  description = "Xray VLESS+Reality VPN server (${each.key})"
 
   resources {
     cores         = var.vm_cores
@@ -104,32 +110,27 @@ resource "yandex_compute_instance" "xray" {
   }
 
   network_interface {
-    subnet_id          = yandex_vpc_subnet.main.id
+    subnet_id          = yandex_vpc_subnet.main[each.key].id
     security_group_ids = [yandex_vpc_security_group.xray.id]
 
     # Attach static IP
-    nat                = true
-    nat_ip_address     = yandex_vpc_address.public_ip.external_ipv4_address[0].address
+    nat            = true
+    nat_ip_address = yandex_vpc_address.public_ip[each.key].external_ipv4_address[0].address
   }
 
   metadata = {
-    # SSH key for access
-    ssh-keys  = "${var.ssh_user}:${file(var.ssh_public_key_path)}"
-
-    # serial-port-enable = 1  # uncomment for debugging via YC console
+    ssh-keys = "${var.ssh_user}:${file(var.ssh_public_key_path)}"
   }
 
-  # Scheduled maintenance policy
   scheduling_policy {
     preemptible = false
   }
 
-  # Do not recreate VM when metadata changes
+  # Do not recreate VM when metadata or boot image changes
   lifecycle {
-    ignore_changes = [metadata]
+    ignore_changes = [metadata, boot_disk[0].initialize_params[0].image_id]
   }
 
-  # Wait for network to be ready
   depends_on = [
     yandex_vpc_subnet.main,
     yandex_vpc_security_group.xray,

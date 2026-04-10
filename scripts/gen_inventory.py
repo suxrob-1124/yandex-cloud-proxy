@@ -34,6 +34,7 @@ def main():
         lines.append(f"          ansible_host: {srv['ip']}")
         lines.append(f"          ansible_user: {srv['ssh_user']}")
         lines.append(f"          sub_port: {srv['sub_port']}")
+        lines.append(f"          masquerade_host: {srv['masquerade_host']}")
         lines.append("")
 
     print("\n".join(lines))

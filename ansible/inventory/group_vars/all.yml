@@ -8,7 +8,7 @@
 # General service parameters
 xray_port:         443
 sub_port:          8443
-masquerade_host:   "www.apple.com"
+# masquerade_host is set per-host in inventory (generated from Terraform)
 
 # Per-user limits (policy level 0)
 # bufferSize: 0 = unlimited, >0 = buffer limit in KB per connection
