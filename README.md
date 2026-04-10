@@ -361,7 +361,8 @@ xray-infra/
 │       └── alex.png
 │
 └── docs/
-    └── runbook.md                   # what to do if something breaks
+    ├── runbook.md                   # what to do if something breaks
+    └── report-YYYY-MM-DD.md         # periodic infrastructure reports
 ```
 
 ---
@@ -450,10 +451,15 @@ Check whitelist: `make check-whitelist`
 | YouTube/Instagram throttled by TSPU | WARP — non-Russian IP via Cloudflare |
 | Russian websites don't need proxying | Direct — fast direct access |
 
-### Domain list
+### Domain lists
 
-Domains for WARP and (in the future) chain proxy are configured in `ansible/inventory/group_vars/all.yml` → `warp_domains`.
-Apply changes: `make sync-users`.
+Domains for each routing level are configured in `ansible/inventory/group_vars/all.yml`:
+
+- `chain_domains` — go through the chain proxy (AI services)
+- `warp_domains` — go through Cloudflare WARP (streaming, social media, video calls)
+- `direct_domains` — go directly with Russian IP (Russian services)
+
+Everything not listed goes direct. Apply changes: `make sync-users`.
 
 ---
 
@@ -489,9 +495,34 @@ make destroy-all SERVER=edge-02   # destroy edge-02 including its IP
 
 ---
 
+## Chain Proxy (optional)
+
+AI services (ChatGPT, Claude, Gemini) block Russian and Cloudflare IPs.
+A chain proxy is an external VPS with a clean IP that Xray routes AI traffic through via SOCKS5.
+
+### Setup
+
+```bash
+cp ansible/vars/chain.yml.example ansible/vars/chain.yml
+nano ansible/vars/chain.yml
+```
+
+```yaml
+chain_proxy_addr: "YOUR_VPS_IP"
+chain_proxy_port: 1080
+```
+
+On the VPS, install [microsocks](https://github.com/rofl0r/microsocks) and restrict access via iptables to your edge server IPs only.
+
+Domains routed through the chain are in `ansible/inventory/group_vars/all.yml` → `chain_domains`.
+
+If the chain VPS is unavailable, AI domains can be temporarily moved from `chain_domains` to `warp_domains` and applied with `make sync-users`.
+
+---
+
 ## Monitoring (optional)
 
-A Telegram bot sends alerts to a private channel. It is installed **only if configured** — everything works without it.
+A Telegram bot sends alerts and daily reports to a private channel. It is installed **only if configured** — everything works without it.
 
 ### Alerts
 
@@ -500,8 +531,19 @@ A Telegram bot sends alerts to a private channel. It is installed **only if conf
 | Xray is down | `systemctl status xray != active` | Critical |
 | Nginx is down | `systemctl status nginx != active` | Critical |
 | Port 443 not listening | Clients cannot connect | Critical |
-| Chain proxy unreachable | AI services not working | Warning |
+| Chain proxy unreachable | TCP port check fails 3 times | Warning |
 | Disk > 80% | Logs filled the disk | Warning |
+| Heavy traffic user | User exceeds 5 GB/day | Warning |
+
+### Daily reports (at 09:00 MSK)
+
+Two messages per server:
+1. **Daily traffic** — per-user traffic for the previous day
+2. **All-time traffic** — cumulative stats since Xray start
+
+Daily traffic is calculated using a baseline snapshot saved once per day. No data is lost — Xray counters are never reset.
+
+### How it works
 
 Checks run every 5 minutes. Alerts are deduplicated — the same alert is not sent more than once per hour. Upon recovery, a `working again` message is sent.
 

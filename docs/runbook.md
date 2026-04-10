@@ -335,8 +335,15 @@ ssh -i ~/.ssh/xray-infra ubuntu@<SERVER_IP> \
   "sudo /usr/local/bin/xray api statsquery --server=127.0.0.1:10085 -pattern ''"
 ```
 
-The output shows upload/download in bytes for each user since the last Xray restart.
-Run this on each server separately to see per-server traffic.
+The output shows upload/download in bytes for each user since the last Xray restart
+(cumulative, not daily). Run this on each server separately to see per-server traffic.
+
+**Daily traffic** is tracked by the monitoring script using a baseline snapshot
+(`/var/lib/xray-traffic-baseline.json`). Daily = current counters minus baseline.
+The baseline is updated once per day at 09:00 MSK when the daily report is sent.
+
+If Xray was restarted (counters reset to zero), the script detects this and uses
+the current value as the daily amount.
 
 ---
 
@@ -353,15 +360,24 @@ make update-whitelist             # update lists from GitHub
 ## Chain Proxy (VPS Sweden) is Not Working
 
 ```bash
-# Check microsocks on the VPS
-ssh -i ~/.ssh/xray-infra <USER>@<CHAIN_PROXY_IP> "systemctl status microsocks --no-pager | head -5"
+# SSH to the chain VPS (address and credentials in ansible/vars/chain.yml)
+# Use -o IdentitiesOnly=yes to avoid "Too many authentication failures"
+ssh -o IdentitiesOnly=yes -i <KEY> <USER>@<CHAIN_PROXY_IP>
+
+# Check microsocks
+sudo systemctl status microsocks --no-pager | head -5
 
 # Restart
-ssh -i ~/.ssh/xray-infra <USER>@<CHAIN_PROXY_IP> "sudo systemctl restart microsocks"
+sudo systemctl restart microsocks
 
 # Check iptables (access should be allowed from ALL edge server IPs)
-ssh -i ~/.ssh/xray-infra <USER>@<CHAIN_PROXY_IP> "sudo iptables -L INPUT -n | grep 1080"
+sudo iptables -L INPUT -n | grep 1080
 # Should show ACCEPT rules for each edge server IP
+
+# Check resources
+free -h
+uptime
+sudo journalctl -u microsocks --since "1 hour ago" --no-pager
 ```
 
 > **Important:** port 1080 on the VPS is closed to everyone except the edge servers (iptables).
