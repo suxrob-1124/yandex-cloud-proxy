@@ -13,6 +13,7 @@ SERVER_NAME="{{ inventory_hostname }}"
 SERVER_IP="{{ ansible_host }}"
 
 ALERT_FILE="/tmp/xray-monitor-alerts"
+BASELINE_FILE="/var/lib/xray-traffic-baseline.json"
 touch "$ALERT_FILE"
 
 send_alert() {
@@ -53,11 +54,67 @@ ${msg}"
 
 clear_alert() {
     local key="$1"
-    if grep -q "$key" "$ALERT_FILE" 2>/dev/null; then
-        grep -v "$key" "$ALERT_FILE" > "${ALERT_FILE}.tmp" 2>/dev/null || true
+    if grep -q "^${key}|" "$ALERT_FILE" 2>/dev/null; then
+        # Remove the alert and send recovery (once)
+        grep -v "^${key}|" "$ALERT_FILE" > "${ALERT_FILE}.tmp" 2>/dev/null || true
         mv "${ALERT_FILE}.tmp" "$ALERT_FILE"
-        send_alert "ok" "$2" "${key}_resolved"
+
+        local icon="✅"
+        local text="${icon} *${SERVER_NAME}* (${SERVER_IP})
+$2"
+        curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="$CHAT_ID" \
+            -d text="$text" \
+            -d parse_mode="Markdown" \
+            > /dev/null 2>&1
     fi
+}
+
+# Helper: get current xray user stats as JSON {user: bytes, ...}
+get_current_stats() {
+    /usr/local/bin/xray api statsquery --server=127.0.0.1:10085 -pattern 'user' 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+except:
+    print('{}')
+    sys.exit(0)
+users = {}
+for s in data.get('stat', []):
+    parts = s['name'].split('>>>')
+    if len(parts) >= 4 and parts[0] == 'user':
+        name = parts[1]
+        val = s.get('value', 0)
+        users[name] = users.get(name, 0) + val
+print(json.dumps(users))
+" 2>/dev/null || echo '{}'
+}
+
+# Helper: compute daily stats (current - baseline)
+compute_daily_stats() {
+    local current="$1"
+    python3 -c "
+import json, os
+
+current = json.loads('$current')
+baseline = {}
+if os.path.exists('$BASELINE_FILE'):
+    try:
+        with open('$BASELINE_FILE') as f:
+            baseline = json.load(f)
+    except:
+        pass
+
+daily = {}
+for name, total in current.items():
+    base = baseline.get(name, 0)
+    diff = total - base
+    if diff < 0:
+        diff = total  # xray restarted, counters reset — use current as daily
+    daily[name] = diff
+
+print(json.dumps(daily))
+" 2>/dev/null || echo '{}'
 }
 
 # --- Check 1: Xray is running ---
@@ -82,9 +139,18 @@ else
     clear_alert "disk_full" "Disk: ${DISK_USAGE}% (normal)"
 fi
 
-# --- Check 4: Chain proxy (Sweden VPS) ---
+# --- Check 4: Chain proxy (Sweden VPS) — TCP port check with retry ---
 {% if chain_proxy_addr is defined %}
-if curl -s --socks5-hostname {{ chain_proxy_addr }}:{{ chain_proxy_port | default(1080) }} --max-time 5 https://ifconfig.me > /dev/null 2>&1; then
+CHAIN_OK=false
+for attempt in 1 2 3; do
+    if timeout 5 bash -c "echo > /dev/tcp/{{ chain_proxy_addr }}/{{ chain_proxy_port | default(1080) }}" 2>/dev/null; then
+        CHAIN_OK=true
+        break
+    fi
+    [ "$attempt" -lt 3 ] && sleep 5
+done
+
+if $CHAIN_OK; then
     clear_alert "chain_down" "Chain proxy is reachable again"
 else
     send_alert "warn" "Chain proxy ({{ chain_proxy_addr }}) is unreachable — AI services are not working" "chain_down"
@@ -98,13 +164,21 @@ else
     send_alert "crit" "Port 443 is not listening — clients will not be able to connect!" "port443_down"
 fi
 
-# --- Check 6: Traffic per user (heavy user alert) ---
+# --- Current hour and date ---
+HOUR=$(date +%H)
+TODAY=$(date +%Y-%m-%d)
+
+# --- Get current stats ---
+CURRENT_STATS=$(get_current_stats)
+
+# --- Compute daily stats (current minus baseline) ---
+DAILY_STATS=$(compute_daily_stats "$CURRENT_STATS")
+
+# --- Check 6: Traffic per user (heavy user alert — DAILY traffic) ---
 TRAFFIC_THRESHOLD={{ monitoring_traffic_heavy_user_gb | default(5) }}
 TRAFFIC_THRESHOLD_BYTES=$((TRAFFIC_THRESHOLD * 1073741824))
 
-STATS=$(/usr/local/bin/xray api statsquery --server=127.0.0.1:10085 -pattern 'user' 2>/dev/null || echo '{}')
-
-echo "$STATS" | python3 -c "
+echo "$DAILY_STATS" | python3 -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
@@ -112,17 +186,7 @@ except:
     sys.exit(0)
 threshold = $TRAFFIC_THRESHOLD_BYTES
 heavy = []
-users = {}
-for s in data.get('stat', []):
-    parts = s['name'].split('>>>')
-    if len(parts) >= 4 and parts[0] == 'user':
-        name = parts[1]
-        direction = parts[3]
-        val = s.get('value', 0)
-        if name not in users:
-            users[name] = 0
-        users[name] += val
-for name, total in sorted(users.items(), key=lambda x: -x[1]):
+for name, total in sorted(data.items(), key=lambda x: -x[1]):
     gb = total / 1073741824
     if total > threshold:
         heavy.append(f'{name}: {gb:.1f} GB')
@@ -130,48 +194,85 @@ if heavy:
     print('\n'.join(heavy))
 " > /tmp/xray-heavy-users.txt 2>/dev/null
 
-if [ -s /tmp/xray-heavy-users.txt ]; then
+HEAVY_FLAG="/tmp/xray-heavy-alert-$(date +%Y%m%d)"
+if [ -s /tmp/xray-heavy-users.txt ] && [ ! -f "$HEAVY_FLAG" ] && [ "$HOUR" -ge "08" ]; then
     HEAVY=$(cat /tmp/xray-heavy-users.txt)
-    send_alert "warn" "Heavy traffic users (>${TRAFFIC_THRESHOLD} GB):
-${HEAVY}" "heavy_users"
+    curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+        -d chat_id="$CHAT_ID" \
+        -d text="⚠️ *${SERVER_NAME}* — За сегодня (${TODAY}) превышен лимит ${TRAFFIC_THRESHOLD} ГБ/день:
+${HEAVY}" \
+        -d parse_mode="Markdown" \
+        > /dev/null 2>&1
+    touch "$HEAVY_FLAG"
 fi
 
-# --- Check 7: Daily traffic report (once per day at ~00:05) ---
-HOUR=$(date +%H)
-MINUTE=$(date +%M)
-if [ "$HOUR" = "00" ] && [ "$MINUTE" -lt "10" ]; then
-    REPORT=$(/usr/local/bin/xray api statsquery --server=127.0.0.1:10085 -pattern 'user' 2>/dev/null | python3 -c "
+# --- Check 7: Daily traffic report (once per day at ~09:00 MSK) ---
+REPORT_FLAG="/tmp/xray-daily-report-$(date +%Y%m%d)"
+if [ "$HOUR" = "09" ] && [ ! -f "$REPORT_FLAG" ]; then
+    rm -f /tmp/xray-daily-report-* 2>/dev/null
+    rm -f /tmp/xray-heavy-alert-* 2>/dev/null
+
+    YESTERDAY=$(date -d 'yesterday' +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d 2>/dev/null || echo "вчера")
+
+    # Daily report (current - baseline = yesterday's traffic)
+    DAILY_REPORT=$(echo "$DAILY_STATS" | python3 -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
 except:
     sys.exit(0)
-users = {}
-for s in data.get('stat', []):
-    parts = s['name'].split('>>>')
-    if len(parts) >= 4 and parts[0] == 'user':
-        name = parts[1]
-        val = s.get('value', 0)
-        if name not in users:
-            users[name] = 0
-        users[name] += val
 total_all = 0
 lines = []
-for name, total in sorted(users.items(), key=lambda x: -x[1]):
+for name, total in sorted(data.items(), key=lambda x: -x[1]):
     gb = total / 1073741824
     total_all += total
-    lines.append(f'  {name}: {gb:.2f} GB')
-lines.append(f'  ──────────')
-lines.append(f'  Total: {total_all/1073741824:.2f} GB')
-print('\n'.join(lines))
+    if gb >= 0.01:
+        lines.append(f'  {name}: {gb:.2f} GB')
+if lines:
+    lines.append(f'  ──────────')
+    lines.append(f'  Итого: {total_all/1073741824:.2f} GB')
+    print('\n'.join(lines))
 " 2>/dev/null)
 
-    if [ -n "$REPORT" ]; then
-        # Daily report — always send, no dedup
+    # All-time report (raw current stats from xray)
+    ALLTIME_REPORT=$(echo "$CURRENT_STATS" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+except:
+    sys.exit(0)
+total_all = 0
+lines = []
+for name, total in sorted(data.items(), key=lambda x: -x[1]):
+    gb = total / 1073741824
+    total_all += total
+    if gb >= 0.01:
+        lines.append(f'  {name}: {gb:.2f} GB')
+if lines:
+    lines.append(f'  ──────────')
+    lines.append(f'  Итого: {total_all/1073741824:.2f} GB')
+    print('\n'.join(lines))
+" 2>/dev/null)
+
+    touch "$REPORT_FLAG"
+
+    # Save current stats as new baseline for next day
+    echo "$CURRENT_STATS" > "$BASELINE_FILE"
+
+    if [ -n "$DAILY_REPORT" ]; then
         curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d chat_id="$CHAT_ID" \
-            -d text="📊 *${SERVER_NAME}* — Daily traffic report:
-${REPORT}" \
+            -d text="📊 *${SERVER_NAME}* — Трафик за день (${YESTERDAY}):
+${DAILY_REPORT}" \
+            -d parse_mode="Markdown" \
+            > /dev/null 2>&1
+    fi
+
+    if [ -n "$ALLTIME_REPORT" ]; then
+        curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="$CHAT_ID" \
+            -d text="📈 *${SERVER_NAME}* — Трафик за всё время:
+${ALLTIME_REPORT}" \
             -d parse_mode="Markdown" \
             > /dev/null 2>&1
     fi
