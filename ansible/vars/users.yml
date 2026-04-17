@@ -60,6 +60,7 @@ users:
     created:   "2026-03-30"
     active:    true
 
+
   - name:      a.shulepin
     ru_direct: true
     created:   "2026-03-31"
@@ -70,6 +71,15 @@ users:
     created:   "2026-03-31"
     active:    true
 
+  - name:      d.marikoda@alfasearch.org
+    ru_direct: true
+    created:   "2026-04-13"
+    active:    true
+
+  - name:      d.metelitsa@alfasearch.org
+    ru_direct: true
+    created:   "2026-04-13"
+    active:    true
 
 
   # Example of a disabled user (active: false)

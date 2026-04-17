@@ -1,0 +1,7 @@
+# edge-02 cannot reach chain proxy on port 1080 directly (provider blocks it).
+# SSH tunnel (autossh) forwards 127.0.0.1:1080 -> chain_server:1080 via SSH.
+# Xray and monitoring connect to the local end of the tunnel.
+chain_tunnel: true
+chain_proxy_port_remote: 1080
+chain_proxy_addr_local: "127.0.0.1"
+chain_proxy_port: 1080

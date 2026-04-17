@@ -110,7 +110,7 @@
       "protocol": "socks",
       "settings": {
         "servers": [{
-          "address": "{{ chain_proxy_addr }}",
+          "address": "{{ chain_proxy_addr_local | default(chain_proxy_addr) }}",
           "port":    {{ chain_proxy_port | default(1080) }}
         }]
       },

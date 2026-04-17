@@ -38,22 +38,21 @@ resource "yandex_vpc_address" "public_ip" {
 }
 
 # =============================================================
-#  Security group — shared for all servers
+#  Security group — one per server (isolates destroy operations)
 # =============================================================
 
 resource "yandex_vpc_security_group" "xray" {
-  name        = "edge-sg"
-  description = "Access rules for edge servers"
+  for_each    = var.servers
+  name        = "${each.key}-sg"
+  description = "Access rules for ${each.key}"
   network_id  = yandex_vpc_network.main.id
 
-  # Outbound traffic — unrestricted
   egress {
     protocol       = "ANY"
     description    = "All outbound traffic"
     v4_cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # SSH — management only
   ingress {
     protocol       = "TCP"
     description    = "SSH access"
@@ -61,7 +60,6 @@ resource "yandex_vpc_security_group" "xray" {
     port           = 22
   }
 
-  # Xray VLESS+Reality
   ingress {
     protocol       = "TCP"
     description    = "Xray VLESS proxy"
@@ -69,7 +67,6 @@ resource "yandex_vpc_security_group" "xray" {
     port           = var.xray_port
   }
 
-  # Nginx — serving client configs
   ingress {
     protocol       = "TCP"
     description    = "Nginx sub configs"
@@ -111,7 +108,7 @@ resource "yandex_compute_instance" "xray" {
 
   network_interface {
     subnet_id          = yandex_vpc_subnet.main[each.key].id
-    security_group_ids = [yandex_vpc_security_group.xray.id]
+    security_group_ids = [yandex_vpc_security_group.xray[each.key].id]
 
     # Attach static IP
     nat            = true
@@ -131,9 +128,4 @@ resource "yandex_compute_instance" "xray" {
     ignore_changes = [metadata, boot_disk[0].initialize_params[0].image_id]
   }
 
-  depends_on = [
-    yandex_vpc_subnet.main,
-    yandex_vpc_security_group.xray,
-    yandex_vpc_address.public_ip,
-  ]
 }

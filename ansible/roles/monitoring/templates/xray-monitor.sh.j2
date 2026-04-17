@@ -143,7 +143,7 @@ fi
 {% if chain_proxy_addr is defined %}
 CHAIN_OK=false
 for attempt in 1 2 3; do
-    if timeout 5 bash -c "echo > /dev/tcp/{{ chain_proxy_addr }}/{{ chain_proxy_port | default(1080) }}" 2>/dev/null; then
+    if nc -z -w 5 {{ chain_proxy_addr_local | default(chain_proxy_addr) }} {{ chain_proxy_port | default(1080) }} 2>/dev/null; then
         CHAIN_OK=true
         break
     fi

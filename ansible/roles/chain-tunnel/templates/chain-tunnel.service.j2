@@ -1,0 +1,13 @@
+[Unit]
+Description=SSH tunnel to chain proxy ({{ chain_proxy_addr }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/autossh -M 0 -N -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" -o "ExitOnForwardFailure yes" -o "StrictHostKeyChecking no" -i {{ chain_tunnel_key_path }} -L 127.0.0.1:1080:127.0.0.1:{{ chain_proxy_port_remote | default(1080) }} {{ chain_tunnel_remote_user }}@{{ chain_proxy_addr }}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

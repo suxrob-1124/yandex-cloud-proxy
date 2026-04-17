@@ -44,6 +44,8 @@
     - common       # basic Ubuntu setup
     - firewall     # ufw rules
     - warp         # Cloudflare WARP registration (WireGuard credentials)
+    - role: chain-tunnel
+      when: chain_tunnel | default(false) | bool
     - xray         # Xray installation and configuration
     - nginx        # serving client configs
     - monitoring   # Telegram alerts (optional, if telegram.yml exists)

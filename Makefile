@@ -142,8 +142,6 @@ destroy: ## Delete VM and network (IP is preserved)
 		cd $(TF_DIR) && terraform destroy \
 			-target='yandex_compute_instance.xray["$(or $(SERVER),edge-01)"]' \
 			-target='yandex_vpc_subnet.main["$(or $(SERVER),edge-01)"]' \
-			-target='yandex_vpc_security_group.xray["$(or $(SERVER),edge-01)"]' \
-			-target='yandex_vpc_network.main["$(or $(SERVER),edge-01)"]' \
 		|| echo -e "$(YELLOW)Cancelled$(NC)"
 
 destroy-all: ## ⚠️  Delete EVERYTHING including IP
@@ -210,7 +208,7 @@ else
 	@cd $(TF_DIR) && terraform output -json server_ips | python3 -c " \
 		import sys, json, subprocess, os; \
 		ips = json.load(sys.stdin); \
-		[subprocess.run(['python3', '$(SCRIPTS_DIR)/show_users.py'], env={**os.environ, 'SERVER_IP': ip, 'SERVER_NAME': name}) for name, ip in ips.items()]"
+		[subprocess.run(['python3', '../$(SCRIPTS_DIR)/show_users.py'], env={**os.environ, 'SERVER_IP': ip, 'SERVER_NAME': name}) for name, ip in ips.items()]"
 endif
 
 show-qr: ## Show links + QR codes for mobile clients
@@ -225,7 +223,7 @@ else
 	@cd $(TF_DIR) && terraform output -json server_ips | python3 -c " \
 		import sys, json, subprocess, os; \
 		ips = json.load(sys.stdin); \
-		[subprocess.run(['python3', '$(SCRIPTS_DIR)/show_users.py', '--qr'], env={**os.environ, 'SERVER_IP': ip, 'SERVER_NAME': name}) for name, ip in ips.items()]"
+		[subprocess.run(['python3', '../$(SCRIPTS_DIR)/show_users.py', '--qr'], env={**os.environ, 'SERVER_IP': ip, 'SERVER_NAME': name}) for name, ip in ips.items()]"
 endif
 
 status: ## Check status of all servers
@@ -261,7 +259,7 @@ check-whitelist: ## Check server IP against mobile operator whitelists
 		ips = json.load(sys.stdin); \
 		server = '$(SERVER)'; \
 		targets = {server: ips[server]} if server and server in ips else ips; \
-		[subprocess.run(['python3', '$(SCRIPTS_DIR)/check_whitelist.py', ip]) for name, ip in targets.items()]"
+		[subprocess.run(['python3', '../$(SCRIPTS_DIR)/check_whitelist.py', ip]) for name, ip in targets.items()]"
 
 update-whitelist: ## Update whitelists from GitHub
 	@echo -e "$(CYAN)→ Updating whitelists...$(NC)"

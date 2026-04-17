@@ -1,0 +1,55 @@
+---
+# =============================================================
+#  roles/chain-tunnel/tasks/main.yml
+#  SSH tunnel to chain proxy via autossh
+#  Applied ONLY to hosts with chain_tunnel: true
+# =============================================================
+
+- name: Install autossh
+  ansible.builtin.apt:
+    name: autossh
+    state: present
+    update_cache: true
+
+- name: Generate SSH key for tunnel
+  ansible.builtin.command:
+    cmd: ssh-keygen -t ed25519 -f {{ chain_tunnel_key_path }} -N "" -C "chain-tunnel@{{ inventory_hostname }}"
+    creates: "{{ chain_tunnel_key_path }}"
+
+- name: Set key permissions
+  ansible.builtin.file:
+    path: "{{ chain_tunnel_key_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Read public key
+  ansible.builtin.slurp:
+    src: "{{ chain_tunnel_key_path }}.pub"
+  register: chain_tunnel_pubkey
+
+- name: Show public key (add to chain server manually)
+  ansible.builtin.debug:
+    msg: >-
+      Add this key to {{ chain_tunnel_remote_user }}@{{ chain_proxy_addr }}:~/.ssh/authorized_keys:
+      {{ chain_tunnel_pubkey.content | b64decode | trim }}
+
+- name: Add chain server to known_hosts
+  ansible.builtin.shell: |
+    ssh-keyscan -t ed25519 {{ chain_proxy_addr }} >> /root/.ssh/known_hosts 2>/dev/null
+    sort -u -o /root/.ssh/known_hosts /root/.ssh/known_hosts
+  changed_when: false
+
+- name: Deploy autossh service
+  ansible.builtin.template:
+    src: chain-tunnel.service.j2
+    dest: /etc/systemd/system/chain-tunnel.service
+    mode: "0644"
+  notify: restart chain-tunnel
+
+- name: Enable and start chain-tunnel
+  ansible.builtin.systemd:
+    name: chain-tunnel
+    enabled: true
+    state: started
+    daemon_reload: true
