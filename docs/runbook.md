@@ -196,6 +196,19 @@ make sync-users SERVER=edge-01
 
 ### Single Server is Broken, but the Same IP is Needed
 
+**If a backup exists** (run `make backup-server` beforehand or secrets are in `data/backups/`):
+
+```bash
+# Delete only the VM (IP preserved)
+make destroy SERVER=edge-02
+
+# Recreate VM with same IP, restore secrets, full install
+# All user links remain unchanged
+make resume-server SERVER=edge-02
+```
+
+**If no backup exists** (keys will be regenerated — users need to press Update):
+
 ```bash
 # Delete only the VM for the affected server (IP is preserved, deletion_protection = true)
 make destroy SERVER=edge-02
@@ -432,6 +445,28 @@ If secrets are missing or corrupted, re-run installation for that server:
 ```bash
 make install SERVER=edge-01
 make sync-users SERVER=edge-01
+```
+
+---
+
+## Pausing a Server to Save Costs
+
+Destroys the VM (compute + disk charges stop) while keeping the static IP reserved (~130 RUB/mo).
+All user subscription links remain valid after resume.
+
+```bash
+# Pause (backs up secrets automatically, then destroys VM)
+make pause-server SERVER=edge-01
+
+# Resume (recreates VM, restores secrets, runs full install)
+make resume-server SERVER=edge-01
+```
+
+Backup files are stored in `data/backups/edge-01/` — they are in `.gitignore`, keep them safe.
+To back up without pausing (while the server is running):
+
+```bash
+make backup-server SERVER=edge-01
 ```
 
 ---

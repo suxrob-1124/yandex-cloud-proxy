@@ -277,11 +277,49 @@ make logs                           # Xray logs
 make ssh                            # SSH to edge-01 (default)
 make ssh SERVER=edge-02             # SSH to edge-02
 
+# Pause / Resume (cost saving)
+make backup-server SERVER=edge-01   # Backup secrets to data/backups/edge-01/
+make pause-server SERVER=edge-01    # Backup + destroy VM (IP preserved, ~130 RUB/mo)
+make resume-server SERVER=edge-01   # Recreate VM + restore secrets + full install
+
 # Utilities
 make check-deps                     # Check that all utilities are installed
 make check-whitelist                # Check IP against whitelists
 make update-whitelist               # Update whitelists from GitHub
 make help                           # All commands
+```
+
+---
+
+## Pause / Resume (Cost Saving)
+
+To temporarily stop a server without losing user configs or the IP address:
+
+```bash
+# Step 1 — pause (backup secrets + destroy VM, IP stays reserved)
+make pause-server SERVER=edge-01
+
+# Step 2 — resume when needed (recreate VM, restore secrets, full install)
+make resume-server SERVER=edge-01
+```
+
+While paused, only the static IP is billed (~130 RUB/month instead of the full VM cost).
+After resuming, **all user subscription links remain unchanged** — the same Reality keys, UUIDs, and subscription tokens are restored from the local backup.
+
+### What gets backed up
+
+| File on server | Contents | Where saved locally |
+|----------------|----------|---------------------|
+| `/etc/xray-manager/secrets.json` | Reality private/public keys + short_id | `data/backups/edge-01/secrets.json` |
+| `/etc/xray-manager/users.json` | user UUIDs | `data/backups/edge-01/users.json` |
+| `/etc/xray-manager/sub_token` | subscription URL token | `data/backups/edge-01/sub_token` |
+
+The `data/backups/` directory is in `.gitignore` — keep these files in a safe place (e.g., encrypted external drive or password manager).
+
+To back up without pausing (while the server is still running):
+
+```bash
+make backup-server SERVER=edge-01
 ```
 
 ---
@@ -345,7 +383,9 @@ xray-infra/
 │       ├── users.yml                # user synchronization
 │       ├── status.yml               # health check
 │       ├── rotate_keys.yml          # Reality key rotation
-│       └── rotate_warp.yml          # WARP credentials rotation
+│       ├── rotate_warp.yml          # WARP credentials rotation
+│       ├── backup.yml               # backup secrets to data/backups/{server}/
+│       └── restore-secrets.yml      # restore secrets to fresh VM before install
 │
 ├── scripts/
 │   ├── gen_inventory.py             # Terraform output → Ansible inventory
@@ -353,12 +393,17 @@ xray-infra/
 │   ├── show_users.py                # display subscription links and QR codes
 │   └── check_whitelist.py           # check IP against carrier whitelists
 │
-├── qr-codes/                        ← generated QR code images
-│   ├── edge-01/                     # QR codes for edge-01 users
-│   │   ├── ivan.png
-│   │   └── maria.png
-│   └── edge-02/                     # QR codes for edge-02 users
-│       └── alex.png
+├── qr-codes/                        ← generated QR code images (gitignored)
+│   ├── edge-01/
+│   └── edge-02/
+│
+├── data/
+│   ├── whitelist/                   # carrier IP whitelist data (git submodule)
+│   └── backups/                     ← server secret backups (gitignored, keep safe!)
+│       └── edge-01/
+│           ├── secrets.json         # Reality keys
+│           ├── users.json           # user UUIDs
+│           └── sub_token            # subscription token
 │
 └── docs/
     ├── runbook.md                   # what to do if something breaks

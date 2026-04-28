@@ -31,6 +31,7 @@ NC     := \033[0m
         inventory wait-ssh \
         install sync-users status rotate-keys rotate-warp logs \
         deploy ssh \
+        backup-server pause-server resume-server \
         check-deps check-whitelist update-whitelist
 
 # =============================================================
@@ -60,6 +61,11 @@ help: ## Show all commands
 	@echo -e "    make $(BOLD)rotate-warp$(NC)   Re-register WARP credentials"
 	@echo -e "    make $(BOLD)logs$(NC)          Show Xray logs"
 	@echo ""
+	@echo -e "  $(GREEN)Pause / Resume (save costs):$(NC)"
+	@echo -e "    make $(BOLD)backup-server$(NC) Backup secrets to data/backups/{server}/"
+	@echo -e "    make $(BOLD)pause-server$(NC)  Backup + destroy VM (IP preserved, ~130 RUB/mo)"
+	@echo -e "    make $(BOLD)resume-server$(NC) Recreate VM + restore secrets + install"
+	@echo ""
 	@echo -e "  $(GREEN)Combined:$(NC)"
 	@echo -e "    make $(BOLD)deploy$(NC)        Full deploy: Terraform + Ansible"
 	@echo -e "    make $(BOLD)ssh$(NC)           SSH connection to server"
@@ -75,6 +81,8 @@ help: ## Show all commands
 	@echo -e "    make sync-users SERVER=edge-03   # sync users on edge-03"
 	@echo -e "    make destroy SERVER=edge-02      # destroy only edge-02"
 	@echo -e "    make status                      # status of all servers"
+	@echo -e "    make pause-server SERVER=edge-01 # pause edge-01 (save money)"
+	@echo -e "    make resume-server SERVER=edge-01 # resume edge-01"
 	@echo ""
 
 # =============================================================
@@ -277,6 +285,57 @@ deploy: check-deps init apply install ## Full deploy from scratch: Terraform + A
 	@echo -e "  Next steps:"
 	@echo -e "    Add users: edit $(BOLD)ansible/vars/users.yml$(NC)"
 	@echo -e "    Apply:     $(BOLD)make sync-users$(NC)"
+
+# =============================================================
+#  Pause / Resume — save costs without losing user configs
+# =============================================================
+
+backup-server: inventory ## Backup server secrets to data/backups/{server}/
+	@echo -e "$(CYAN)→ Backing up secrets from $(or $(SERVER),all servers)...$(NC)"
+	@echo -e "  Saves: secrets.json, users.json, sub_token"
+	@echo ""
+	cd $(ANSIBLE_DIR) && ansible-playbook playbooks/backup.yml $(LIMIT)
+	@echo ""
+	@echo -e "$(GREEN)✓ Backup saved to data/backups/$(or $(SERVER),<server>)/$(NC)"
+	@echo -e "  $(YELLOW)This directory is in .gitignore — keep it safe!$(NC)"
+
+pause-server: ## Backup secrets + destroy VM (IP preserved, ~130 RUB/mo)
+ifndef SERVER
+	$(error SERVER is required: make pause-server SERVER=edge-01)
+endif
+	@echo -e "$(YELLOW)$(BOLD)Pausing $(SERVER): backup → destroy VM (IP stays)$(NC)"
+	@echo ""
+	@$(MAKE) backup-server SERVER=$(SERVER)
+	@echo ""
+	@echo -e "$(YELLOW)$(BOLD)⚠️  About to destroy VM $(SERVER). IP will be preserved.$(NC)"
+	@read -p "  Enter 'yes' to confirm: " confirm && \
+		[ "$$confirm" = "yes" ] && \
+		cd $(TF_DIR) && terraform destroy \
+			-target='yandex_compute_instance.xray["$(SERVER)"]' \
+			-target='yandex_vpc_subnet.main["$(SERVER)"]' \
+		|| echo -e "$(YELLOW)Cancelled$(NC)"
+	@echo ""
+	@echo -e "$(GREEN)✓ $(SERVER) paused. IP preserved. Cost: ~130 RUB/mo$(NC)"
+	@echo -e "  Resume: $(BOLD)make resume-server SERVER=$(SERVER)$(NC)"
+
+resume-server: ## Recreate VM + restore secrets + full install
+ifndef SERVER
+	$(error SERVER is required: make resume-server SERVER=edge-01)
+endif
+	@echo -e "$(CYAN)→ Resuming $(SERVER)...$(NC)"
+	@test -f data/backups/$(SERVER)/secrets.json || \
+		(echo -e "$(RED)✗ No backup found at data/backups/$(SERVER)/secrets.json$(NC)" && \
+		echo -e "  Run: make backup-server SERVER=$(SERVER) while server is still running" && exit 1)
+	@echo ""
+	@$(MAKE) apply SERVER=$(SERVER)
+	@$(MAKE) wait-ssh SERVER=$(SERVER)
+	@echo ""
+	@echo -e "$(CYAN)→ Restoring secrets (preserving user links)...$(NC)"
+	cd $(ANSIBLE_DIR) && ansible-playbook playbooks/restore-secrets.yml --limit $(SERVER)
+	@echo ""
+	@$(MAKE) install SERVER=$(SERVER)
+	@echo ""
+	@echo -e "$(GREEN)✓ $(SERVER) resumed. All user links unchanged.$(NC)"
 
 ssh: ## SSH connection to server (use SERVER= to pick)
 	@echo -e "$(CYAN)→ Connecting to server...$(NC)"

@@ -1,0 +1,57 @@
+---
+# =============================================================
+#  playbooks/backup.yml
+#  Backs up critical server secrets to data/backups/{server}/
+#  Run: make backup-server SERVER=edge-01
+#
+#  Saves:
+#    - secrets.json  — Reality private/public keys + short_id
+#    - users.json    — user UUIDs (preserves subscription links)
+#    - sub_token     — subscription URL token
+# =============================================================
+
+- name: Backup server secrets
+  hosts: xray_servers
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../inventory/group_vars/all.yml"
+
+  vars:
+    backup_dir: "{{ playbook_dir }}/../../data/backups/{{ inventory_hostname }}"
+
+  tasks:
+    - name: Create local backup directory
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    - name: Fetch secrets.json
+      ansible.builtin.fetch:
+        src: "{{ xray_secrets_file }}"
+        dest: "{{ backup_dir }}/secrets.json"
+        flat: true
+
+    - name: Fetch users.json
+      ansible.builtin.fetch:
+        src: "{{ users_file }}"
+        dest: "{{ backup_dir }}/users.json"
+        flat: true
+
+    - name: Fetch sub_token
+      ansible.builtin.fetch:
+        src: "{{ sub_token_file }}"
+        dest: "{{ backup_dir }}/sub_token"
+        flat: true
+
+    - name: Backup complete
+      ansible.builtin.debug:
+        msg:
+          - "✓ Backup saved to data/backups/{{ inventory_hostname }}/"
+          - "  secrets.json  — Reality keys"
+          - "  users.json    — user UUIDs"
+          - "  sub_token     — subscription token"

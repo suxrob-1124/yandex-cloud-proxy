@@ -32,6 +32,9 @@ ansible/inventory/hosts.yml
 # QR codes (contain VLESS credentials)
 qr-codes/
 
+# Server backups (contain Reality keys, UUIDs, tokens — never commit)
+data/backups/
+
 # Billing and screenshots (may contain IPs/tokens)
 *.csv
 *.png
