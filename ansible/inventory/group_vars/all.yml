@@ -75,6 +75,7 @@ chain_domains:
   - "domain:midjourney.com"
   - "domain:suno.com"
   - "domain:copilot.microsoft.com"
+  - "domain:hzhz.fibery.io"
 
 # WARP — domains via Cloudflare WireGuard (non-Russian IP)
 warp_domains:

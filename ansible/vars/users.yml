@@ -81,6 +81,16 @@ users:
     created:   "2026-04-13"
     active:    true
 
+  - name:      sshukurov_mac
+    ru_direct: true
+    created:   "2026-05-28"
+    active:    true
+
+  - name:      sshukurov_iphone
+    ru_direct: true
+    created:   "2026-05-28"
+    active:    true
+
 
   # Example of a disabled user (active: false)
   # - name:      olduser
