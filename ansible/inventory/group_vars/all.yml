@@ -110,6 +110,8 @@ warp_domains:
   - "domain:discord.com"
   - "domain:discord.gg"
   - "domain:discordapp.com"
+  # Telegram — throttled by TSPU on RU datacenter IPs; route via WARP
+  - "geosite:telegram"
   # Video
   - "domain:youtube.com"
   - "domain:googlevideo.com"
@@ -122,3 +124,8 @@ warp_domains:
   - "domain:notion.site"
   - "domain:glassdoor.com"
   - "domain:linkedin.com"
+
+# IP-based WARP routing — for protocols that connect by raw IP (no domain to match).
+# Telegram (MTProto) dials its DC IPs directly, so geosite alone can't catch it.
+warp_ips:
+  - "geoip:telegram"

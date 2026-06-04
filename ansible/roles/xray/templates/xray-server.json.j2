@@ -149,6 +149,13 @@
         "outboundTag": "warp"
       },
 {% endif %}
+{% if warp_secrets is defined and warp_ips is defined %}
+      {
+        "type":        "field",
+        "ip":          {{ warp_ips | to_json }},
+        "outboundTag": "warp"
+      },
+{% endif %}
       {
         "type":        "field",
         "ip":          ["geoip:private"],
