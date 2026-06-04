@@ -57,6 +57,12 @@ variable "vm_memory_gb" {
   default     = 2
 }
 
+variable "vm_core_fraction" {
+  description = "Guaranteed vCPU performance share (%). 20 is enough for network-bound VPN load; bursts up to 100%."
+  type        = number
+  default     = 20
+}
+
 variable "vm_disk_gb" {
   description = "Disk size in GB"
   type        = number

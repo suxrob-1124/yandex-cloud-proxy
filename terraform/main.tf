@@ -92,10 +92,13 @@ resource "yandex_compute_instance" "xray" {
 
   description = "Xray VLESS+Reality VPN server (${each.key})"
 
+  # core_fraction/resources changes require the VM to be stopped briefly
+  allow_stopping_for_update = true
+
   resources {
     cores         = var.vm_cores
     memory        = var.vm_memory_gb
-    core_fraction = 100
+    core_fraction = var.vm_core_fraction
   }
 
   boot_disk {
