@@ -19,11 +19,13 @@
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../vars/telegram.yml"
       ignore_errors: true
+      tags: [always]
 
     - name: Load chain proxy settings (if available)
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../vars/chain.yml"
       ignore_errors: true
+      tags: [always]
     - name: Check OS
       ansible.builtin.assert:
         that:
@@ -43,10 +45,12 @@
   roles:
     - common       # basic Ubuntu setup
     - firewall     # ufw rules
-    - warp         # Cloudflare WARP registration (WireGuard credentials)
+    - role: warp   # Cloudflare WARP registration (WireGuard credentials)
+      tags: [config]
     - role: chain-tunnel
       when: chain_tunnel | default(false) | bool
-    - xray         # Xray installation and configuration
+    - role: xray   # Xray installation and configuration
+      tags: [config]
     - nginx        # serving client configs
     - monitoring   # Telegram alerts (optional, if telegram.yml exists)
 
