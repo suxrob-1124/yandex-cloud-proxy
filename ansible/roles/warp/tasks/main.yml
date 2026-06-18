@@ -29,6 +29,10 @@
       register: warp_pubkey_raw
       changed_when: false
 
+    # Run from the operator's machine, NOT the target host: the edge server has a
+    # Russian datacenter IP and Cloudflare's WARP API is unreachable from there
+    # (the request is reset with SSL UNEXPECTED_EOF). Only the pubkey is sent, so
+    # delegating the HTTP call to localhost is safe. See docs/runbook.md.
     - name: Register with Cloudflare WARP API
       ansible.builtin.uri:
         url: "https://api.cloudflareclient.com/v0a2158/reg"
@@ -39,8 +43,11 @@
           tos: "{{ '%Y-%m-%dT%H:%M:%S.000Z' | strftime }}"
         headers:
           Content-Type: "application/json"
+          User-Agent: "okhttp/3.12.1"
         status_code: 200
       register: warp_reg
+      delegate_to: localhost
+      become: false
 
     # reserved bytes = base64_decode(client_id) -> 3 bytes
     # Required for correct WARP routing

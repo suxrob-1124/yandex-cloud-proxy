@@ -326,6 +326,123 @@ make sync-users
 
 ---
 
+## Telegram Stopped Working (WARP Tunnel Dead)
+
+**Symptom:** Telegram stops loading over the VPN while most other sites keep working.
+Other WARP-routed services (Instagram, YouTube, Netflix, Discord, etc.) are broken too,
+but Telegram is usually noticed first.
+
+**Why Telegram depends on WARP:** Telegram dials its DC IPs (`149.154.x`, `91.108.x`)
+by raw IP via MTProto. From a Russian datacenter IP these connections are throttled by
+TSPU, so since commit `22a1d61` all Telegram traffic is routed through WARP
+(`geosite:telegram` in `warp_domains` + `geoip:telegram` in `warp_ips`). If the WARP
+tunnel dies, Telegram dies with it — routing still matches (`access.log` shows
+`[warp]` accepted) but the WireGuard handshake to Cloudflare never completes, so every
+connection silently times out. **There are usually no errors in `error.log`** — the
+kernel TUN just drops packets.
+
+### Diagnose
+
+```bash
+make ssh SERVER=edge-01
+
+# 1. xray itself is fine (this is NOT an xray crash)
+systemctl is-active xray
+
+# 2. Telegram traffic IS being routed to warp (routing is fine)
+sudo grep -E "149\.154\.|91\.108\." /var/log/xray/access.log | tail -5
+#   -> shows "... accepted tcp:149.154.x.x:443 [warp] ..."
+
+# 3. THE key test — is the WARP tunnel actually passing traffic?
+#    xray creates a kernel TUN interface (wg0) for the WARP WireGuard outbound.
+curl -m12 --interface wg0 https://www.cloudflare.com/cdn-cgi/trace | grep -E "^ip=|warp=|loc="
+#   HEALTHY  -> returns instantly: warp=on + a Cloudflare egress IP
+#   BROKEN   -> times out after 12s (or curl exits 28) -> WARP creds are dead
+```
+
+If the trace times out, the WARP credentials have gone stale (Cloudflare deregisters the
+device) and must be re-registered.
+
+### ⚠️ `make rotate-warp` does NOT work from the RU server
+
+The intended fix is `make rotate-warp`, but it **fails on edge-01**. The `warp` role
+registers the device against `https://api.cloudflareclient.com/v0a2158/reg` using the
+`uri` module, which runs **on the target host** (Russian YC datacenter IP). Cloudflare's
+WARP API is unreachable from there — the request is reset with
+`SSL UNEXPECTED_EOF_WHILE_READING` after ~75s. Worse, `rotate-warp` deletes the old
+`warp.json` *before* registering, so a failed run leaves WARP with no credentials at all.
+
+> **Proper fix (not yet applied):** add `delegate_to: localhost` to the
+> *"Register with Cloudflare WARP API"* task in `ansible/roles/warp/tasks/main.yml`
+> so the registration HTTPS call runs from the operator's machine (clean egress).
+> Then `make rotate-warp` would work in a single command.
+
+### Manual WARP re-registration (workaround that works today)
+
+Register the device from a machine with clean egress (your Mac), then push the
+credentials to the server and regenerate the config.
+
+```bash
+# 1. Generate a WireGuard keypair + register with Cloudflare FROM YOUR MAC.
+#    (macOS has no `wg`; use python's cryptography X25519.)
+python3 - <<'PY'
+import json, base64, urllib.request, datetime
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+
+priv = X25519PrivateKey.generate()
+raw_priv = priv.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+raw_pub  = priv.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+PRIV = base64.b64encode(raw_priv).decode()
+PUB  = base64.b64encode(raw_pub).decode()
+
+tos  = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+body = json.dumps({"key": PUB, "tos": tos}).encode()
+req  = urllib.request.Request("https://api.cloudflareclient.com/v0a2158/reg",
+        data=body, method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": "okhttp/3.12.1"})
+cfg  = json.loads(urllib.request.urlopen(req, timeout=20).read())["config"]
+
+warp = {
+  "private_key":     PRIV,
+  "public_key":      PUB,
+  "peer_public_key": cfg["peers"][0]["public_key"],
+  "ipv4":            cfg["interface"]["addresses"]["v4"],
+  "ipv6":            cfg["interface"]["addresses"]["v6"],
+  "client_id":       cfg["client_id"],
+  "reserved":        list(base64.b64decode(cfg["client_id"])),  # 3 bytes — required for routing
+}
+open("/tmp/warp.json", "w").write(json.dumps(warp, indent=2) + "\n")
+print(json.dumps(warp, indent=2))
+PY
+
+# 2. Push it to the server (root-owned, 0600).
+scp -i ~/.ssh/xray-infra /tmp/warp.json ubuntu@<SERVER_IP>:/tmp/warp.json
+ssh -i ~/.ssh/xray-infra ubuntu@<SERVER_IP> \
+  "sudo install -o root -g root -m 0600 /tmp/warp.json /etc/xray-manager/warp.json && rm /tmp/warp.json"
+
+# 3. Regenerate the xray config and restart (config tag runs the warp + xray roles;
+#    the warp role skips registration when warp.json already exists, just loads it).
+cd ansible && ansible-playbook playbooks/install.yml --tags config --limit edge-01
+
+# 4. Verify the tunnel is alive.
+ssh -i ~/.ssh/xray-infra ubuntu@<SERVER_IP> \
+  "curl -m12 --interface wg0 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^ip=|warp=|loc='"
+#   -> warp=on + Cloudflare IP
+ssh -i ~/.ssh/xray-infra ubuntu@<SERVER_IP> \
+  "curl -m12 --interface wg0 -o /dev/null -w '%{http_code}\n' https://web.telegram.org/"
+#   -> 200
+```
+
+After the fix, users may need to reconnect their VPN profile so stale connections are
+rebuilt.
+
+> **Note on testing:** don't test with `curl --interface wg0 https://149.154.167.51/`
+> (a raw Telegram IP) — TLS/SNI/MTProto quirks make it fail even when WARP is healthy.
+> Test against `cloudflare.com/cdn-cgi/trace` and `web.telegram.org` by hostname instead.
+
+---
+
 ## ERR_QUIC_PROTOCOL_ERROR in Browser
 
 QUIC (UDP 443) is blocked on the client — this is normal. The browser should automatically fall back to TCP HTTPS.
