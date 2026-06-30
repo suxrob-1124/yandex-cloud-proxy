@@ -747,3 +747,63 @@ config lives in `ansible/vars/chain.yml` (gitignored): `chain_proxy_addr` +
 `chain_proxy_port`. **That file must exist before running `make install` / config
 redeploys** — without it `chain_proxy_addr` is undefined and the chain outbound (plus
 all AI-service and Telegram routing) silently drops out of the generated config.
+
+---
+
+## Chain Proxy Down — microsocks fd Exhaustion (2026-06-30)
+
+**Symptom:** Telegram **and** all AI services (Claude/Anthropic, OpenAI, …) stop working
+for everyone at once — anything routed through the chain. xray on edge-01 is healthy
+(`systemctl is-active xray` → active, `xray run -test` → OK); the failure is the chain.
+From edge-01, `curl --socks5-hostname 89.125.37.49:1080 ...` returns `HTTP 000` quickly
+(SOCKS "general failure") or hangs.
+
+**Root cause:** microsocks spawns one thread + fd per connection and has **no idle
+timeout**. Dead connections pile up over weeks/months until it hits the default
+`ulimit -n` of **1024** → `accept()` fails → `journalctl -u microsocks` spams
+`failed to accept connection` → no new connections served.
+
+### Diagnose (on the chain VPS)
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_rsa sshukurov@89.125.37.49
+
+PID=$(pgrep -x microsocks)
+sudo ls /proc/$PID/fd | wc -l                         # open fds
+sudo cat /proc/$PID/limits | grep 'open files'        # the limit
+sudo journalctl -u microsocks -n 20 --no-pager        # "failed to accept connection"
+# fd count at/near the limit (e.g. 1023/1024) == confirmed.
+```
+
+### Fix
+
+```bash
+# 1. Instant recovery — frees all fds:
+sudo systemctl restart microsocks
+
+# 2. Permanent — raise the fd ceiling (one-time edit on the VPS):
+sudo sed -i '/^User=nobody/a LimitNOFILE=65536' /etc/systemd/system/microsocks.service
+sudo systemctl daemon-reload && sudo systemctl restart microsocks
+sudo cat /proc/$(pgrep -x microsocks)/limits | grep 'open files'   # -> 65536
+```
+
+> microsocks on the VPS is **not** managed by this ansible repo — these are manual
+> changes on the host. The unit already has `Restart=always` / `RestartSec=5`.
+
+### ⚠️ Diagnostic gotcha — don't test the chain from the VPS itself
+
+iptables on the VPS locks port 1080 to edge-01's IP only:
+
+```
+ACCEPT  158.160.106.177  ->  tcp dpt:1080
+DROP    0.0.0.0/0        ->  tcp dpt:1080
+```
+
+That `DROP` also catches **localhost**, so `curl --socks5 127.0.0.1:1080` *on the VPS*
+hangs in SYN-SENT **by design** — a false "chain is broken" signal. Always test the
+chain from **edge-01** (the whitelisted source). To confirm microsocks itself is
+healthy on the VPS, check it's parked in `accept()`:
+
+```bash
+cat /proc/$(pgrep -x microsocks)/wchan; echo    # -> inet_csk_accept  (healthy, waiting)
+```
