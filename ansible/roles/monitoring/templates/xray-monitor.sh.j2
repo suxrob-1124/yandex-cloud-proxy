@@ -317,3 +317,26 @@ ${DNSBL_LINE}" \
         > /dev/null 2>&1
 {% endif %}
 fi
+
+# --- Recovery watch: OLD (dead) Sweden chain proxy — notify once when it returns ---
+# Runs every invocation (not only at 09:00). Silent while the box stays offline; posts a
+# single Telegram message on the offline->online transition so we can migrate back if it
+# recovers. State kept in a file so it fires only on the transition, not every run.
+{% if chain_proxy_old_addr is defined %}
+OLD_CHAIN_STATE="/var/lib/xray-old-chain-state"
+if nc -z -w 5 {{ chain_proxy_old_addr }} {{ chain_proxy_old_check_port | default(22) }} 2>/dev/null; then
+    OLD_NOW="up"
+else
+    OLD_NOW="down"
+fi
+OLD_PREV=$(cat "$OLD_CHAIN_STATE" 2>/dev/null || echo "down")
+echo "$OLD_NOW" > "$OLD_CHAIN_STATE"
+if [ "$OLD_NOW" = "up" ] && [ "$OLD_PREV" != "up" ]; then
+    curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+        -d chat_id="$CHAT_ID" \
+        -d text="♻️ *${SERVER_NAME}* — Старый шведский chain-прокси ({{ chain_proxy_old_addr }}) СНОВА ОНЛАЙН (порт {{ chain_proxy_old_check_port | default(22) }} отвечает).
+Проверь microsocks/iptables на нём и, если здоров, можно переехать обратно (chain_proxy_addr)." \
+        -d parse_mode="Markdown" \
+        > /dev/null 2>&1 || true
+fi
+{% endif %}
