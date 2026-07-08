@@ -139,7 +139,7 @@ else
     clear_alert "disk_full" "Disk: ${DISK_USAGE}% (normal)"
 fi
 
-# --- Check 4: Chain proxy (Sweden VPS) — TCP port check with retry ---
+# --- Check 4: Chain proxy (NL VPS) — TCP port check with retry ---
 {% if chain_proxy_addr is defined %}
 CHAIN_OK=false
 for attempt in 1 2 3; do
@@ -276,4 +276,44 @@ ${ALLTIME_REPORT}" \
             -d parse_mode="Markdown" \
             > /dev/null 2>&1
     fi
+
+    # --- Chain proxy egress IP — DNSBL / blocklist status (mail-reputation guard) ---
+    # The chain proxy host is also a production mail server; if VPN traffic gets its IP
+    # onto a spam blocklist, mail deliverability (and AI egress) suffers. Check daily.
+{% if chain_proxy_addr is defined %}
+    DNSBL_STATUS=$(python3 -c "
+import socket
+ip = '{{ chain_proxy_addr }}'
+rev = '.'.join(reversed(ip.split('.')))
+zones = {
+    'zen.spamhaus.org': 'Spamhaus',
+    'bl.spamcop.net': 'SpamCop',
+    'b.barracudacentral.org': 'Barracuda',
+    'dnsbl-1.uceprotect.net': 'UCEPROTECT',
+}
+listed = []
+for zone, label in zones.items():
+    try:
+        res = socket.gethostbyname(rev + '.' + zone)
+    except Exception:
+        continue  # NXDOMAIN (not listed) or transient lookup failure
+    if res.startswith('127.255.255.'):
+        continue  # DNSBL return code = query blocked/error, not a real listing
+    listed.append(label + ' (' + res + ')')
+print('LISTED:' + '; '.join(listed) if listed else 'CLEAN')
+" 2>/dev/null || echo "CLEAN")
+
+    if [ "$DNSBL_STATUS" = "CLEAN" ]; then
+        DNSBL_LINE="✅ IP {{ chain_proxy_addr }} — не в блоклистах"
+    else
+        DNSBL_LINE="🚫 IP {{ chain_proxy_addr }} В БЛОКЛИСТАХ: ${DNSBL_STATUS#LISTED:}
+Почта с этого хоста и/или AI-трафик могут блокироваться — проверь delist."
+    fi
+    curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+        -d chat_id="$CHAT_ID" \
+        -d text="🛡 *${SERVER_NAME}* — Chain proxy DNSBL:
+${DNSBL_LINE}" \
+        -d parse_mode="Markdown" \
+        > /dev/null 2>&1
+{% endif %}
 fi

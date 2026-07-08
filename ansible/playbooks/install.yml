@@ -52,7 +52,8 @@
     - role: xray   # Xray installation and configuration
       tags: [config]
     - nginx        # serving client configs
-    - monitoring   # Telegram alerts (optional, if telegram.yml exists)
+    - role: monitoring   # Telegram alerts (optional, if telegram.yml exists)
+      tags: [monitoring]
 
   post_tasks:
     - name: Final service check
