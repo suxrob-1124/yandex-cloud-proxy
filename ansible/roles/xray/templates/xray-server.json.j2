@@ -142,6 +142,13 @@
         "outboundTag": "chain"
       },
 {% endif %}
+{% if chain_proxy_addr is defined and chain_ips is defined and chain_ips | length > 0 %}
+      {
+        "type":        "field",
+        "ip":          {{ chain_ips | to_json }},
+        "outboundTag": "chain"
+      },
+{% endif %}
 {% if warp_secrets is defined and warp_domains is defined %}
       {
         "type":        "field",

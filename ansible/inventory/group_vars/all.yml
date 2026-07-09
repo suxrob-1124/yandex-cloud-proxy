@@ -38,7 +38,11 @@ xray_secrets_file: "/etc/xray-manager/secrets.json"
 
 # WARP (Cloudflare WireGuard)
 warp_secrets_file: "/etc/xray-manager/warp.json"
-warp_endpoint:     "engage.cloudflareclient.com:2408"
+# Use the IPv4 literal, NOT the engage.cloudflareclient.com hostname: the edge
+# server has no working IPv6 egress (YC), and the hostname resolves to both A and
+# AAAA. xray's WireGuard outbound would pick the AAAA endpoint and the handshake
+# to Cloudflare would silently time out (Telegram/WARP dead). See docs/runbook.md.
+warp_endpoint:     "162.159.192.1:2408"
 
 # Chain proxy — settings in ansible/vars/chain.yml (in .gitignore)
 # chain_proxy_addr and chain_proxy_port are set there
@@ -76,6 +80,8 @@ chain_domains:
   - "domain:suno.com"
   - "domain:copilot.microsoft.com"
   - "domain:hzhz.fibery.io"
+  # Telegram — moved off WARP (blocked from RU datacenter IP) to the chain proxy.
+  - "geosite:telegram"
 
 # WARP — domains via Cloudflare WireGuard (non-Russian IP)
 warp_domains:
@@ -110,8 +116,10 @@ warp_domains:
   - "domain:discord.com"
   - "domain:discord.gg"
   - "domain:discordapp.com"
-  # Telegram — throttled by TSPU on RU datacenter IPs; route via WARP
-  - "geosite:telegram"
+  # NOTE: Telegram moved to the chain proxy (see chain_domains/chain_ips).
+  # The WARP tunnel is blocked by TSPU from the RU datacenter IP — the
+  # WireGuard handshake to Cloudflare never completes, so WARP cannot carry
+  # Telegram. The chain proxy (non-RU egress) reaches Telegram fine.
   # Video
   - "domain:youtube.com"
   - "domain:googlevideo.com"
@@ -126,6 +134,11 @@ warp_domains:
   - "domain:linkedin.com"
 
 # IP-based WARP routing — for protocols that connect by raw IP (no domain to match).
+# (Telegram's geoip moved to chain_ips — WARP is blocked from the RU datacenter IP.)
+# warp_ips:
+#   - "..."
+
+# IP-based chain routing — for protocols that connect by raw IP (no domain to match).
 # Telegram (MTProto) dials its DC IPs directly, so geosite alone can't catch it.
-warp_ips:
+chain_ips:
   - "geoip:telegram"

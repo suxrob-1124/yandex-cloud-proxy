@@ -328,6 +328,22 @@ make sync-users
 
 ## Telegram Stopped Working (WARP Tunnel Dead)
 
+> **UPDATE 2026-06-28 — WARP is now blocked outright from the RU datacenter IP.**
+> Telegram has been **moved off WARP onto the chain proxy** (`geosite:telegram` in
+> `chain_domains` + `geoip:telegram` in `chain_ips`). The diagnosis below about the
+> WARP tunnel still applies to the *other* WARP-routed services (streaming, social),
+> which remain broken until WARP itself is fixed. If Telegram breaks again, debug the
+> **chain proxy** path (see "Telegram Stopped Working — chain proxy" at the bottom),
+> not WARP.
+>
+> Root cause confirmed on 2026-06-28: xray sends WireGuard handshake packets to
+> Cloudflare but **gets zero replies**. `162.159.192-193.x` (where
+> `engage.cloudflareclient.com` resolves) is silent from the RU IP; `188.114.96-99.x`
+> answers UDP but the WireGuard session is still torn down (TSPU DPI on the WG
+> protocol). Re-registering creds and switching the endpoint to IPv4 did **not** help —
+> this is a network-level block of WARP transport from the RU datacenter egress, not
+> stale credentials.
+
 **Symptom:** Telegram stops loading over the VPN while most other sites keep working.
 Other WARP-routed services (Instagram, YouTube, Netflix, Discord, etc.) are broken too,
 but Telegram is usually noticed first.
@@ -701,4 +717,93 @@ sudo /usr/local/bin/xray api statsquery --server=127.0.0.1:10085 -pattern ''
 
 # Restart everything
 sudo systemctl restart xray nginx
+```
+
+---
+
+## Telegram Stopped Working — chain proxy path (since 2026-06-28)
+
+Since 2026-06-28 Telegram is routed through the **chain proxy** (Swedish/FI VPS),
+not WARP. If Telegram breaks now, debug the chain, not WARP.
+
+```bash
+make ssh SERVER=edge-01
+
+# 1. Telegram IS being routed to [chain] (not [warp])
+sudo grep -E "149\.154\.|91\.108\." /var/log/xray/access.log | tail -5
+#   -> "... accepted tcp:149.154.x.x:443 [chain] ..."
+
+# 2. Is the chain proxy itself reachable + non-RU egress?
+curl -m12 --socks5-hostname 89.125.37.49:1080 https://www.cloudflare.com/cdn-cgi/trace | grep -E "^ip=|loc="
+#   -> ip=89.125.37.49, loc=FI (or SE) — NOT a Russian IP
+
+# 3. Telegram web through the chain
+curl -m12 --socks5-hostname 89.125.37.49:1080 -o /dev/null -w '%{http_code}\n' https://web.telegram.org/
+#   -> 200
+```
+
+If the chain is down, see "microsocks chain proxy" troubleshooting above. The chain
+config lives in `ansible/vars/chain.yml` (gitignored): `chain_proxy_addr` +
+`chain_proxy_port`. **That file must exist before running `make install` / config
+redeploys** — without it `chain_proxy_addr` is undefined and the chain outbound (plus
+all AI-service and Telegram routing) silently drops out of the generated config.
+
+---
+
+## Chain Proxy Down — microsocks fd Exhaustion (2026-06-30)
+
+**Symptom:** Telegram **and** all AI services (Claude/Anthropic, OpenAI, …) stop working
+for everyone at once — anything routed through the chain. xray on edge-01 is healthy
+(`systemctl is-active xray` → active, `xray run -test` → OK); the failure is the chain.
+From edge-01, `curl --socks5-hostname 89.125.37.49:1080 ...` returns `HTTP 000` quickly
+(SOCKS "general failure") or hangs.
+
+**Root cause:** microsocks spawns one thread + fd per connection and has **no idle
+timeout**. Dead connections pile up over weeks/months until it hits the default
+`ulimit -n` of **1024** → `accept()` fails → `journalctl -u microsocks` spams
+`failed to accept connection` → no new connections served.
+
+### Diagnose (on the chain VPS)
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_rsa sshukurov@89.125.37.49
+
+PID=$(pgrep -x microsocks)
+sudo ls /proc/$PID/fd | wc -l                         # open fds
+sudo cat /proc/$PID/limits | grep 'open files'        # the limit
+sudo journalctl -u microsocks -n 20 --no-pager        # "failed to accept connection"
+# fd count at/near the limit (e.g. 1023/1024) == confirmed.
+```
+
+### Fix
+
+```bash
+# 1. Instant recovery — frees all fds:
+sudo systemctl restart microsocks
+
+# 2. Permanent — raise the fd ceiling (one-time edit on the VPS):
+sudo sed -i '/^User=nobody/a LimitNOFILE=65536' /etc/systemd/system/microsocks.service
+sudo systemctl daemon-reload && sudo systemctl restart microsocks
+sudo cat /proc/$(pgrep -x microsocks)/limits | grep 'open files'   # -> 65536
+```
+
+> microsocks on the VPS is **not** managed by this ansible repo — these are manual
+> changes on the host. The unit already has `Restart=always` / `RestartSec=5`.
+
+### ⚠️ Diagnostic gotcha — don't test the chain from the VPS itself
+
+iptables on the VPS locks port 1080 to edge-01's IP only:
+
+```
+ACCEPT  158.160.106.177  ->  tcp dpt:1080
+DROP    0.0.0.0/0        ->  tcp dpt:1080
+```
+
+That `DROP` also catches **localhost**, so `curl --socks5 127.0.0.1:1080` *on the VPS*
+hangs in SYN-SENT **by design** — a false "chain is broken" signal. Always test the
+chain from **edge-01** (the whitelisted source). To confirm microsocks itself is
+healthy on the VPS, check it's parked in `accept()`:
+
+```bash
+cat /proc/$(pgrep -x microsocks)/wchan; echo    # -> inet_csk_accept  (healthy, waiting)
 ```
